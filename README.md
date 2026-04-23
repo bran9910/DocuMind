@@ -25,17 +25,17 @@ Everything runs on a private VPS — no cloud LLM required.
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Telegram  │────▶│     n8n     │────▶│   Ollama    │
-│    User     │◀────│  Workflows  │◀────│kimi-k2.5:cloud│
+│   Telegram  │────▶│     n8n     │────▶│  Agent IA   │
+│    User     │◀────│  Workflows  │◀────│   Ollama    │
 └─────────────┘     └──────┬──────┘     └─────────────┘
                            │
               ┌────────────┼────────────┐
               ▼            ▼            ▼
         ┌─────────┐  ┌─────────┐  ┌──────────┐
         │PostgreSQL│  │QuickChart│  │File Parse│
-        │16-alpine│  │  .io    │  │PDF/DOCX  │
-        │Sessions │  │(Graphs) │  │XLSX / CSV│
-        └─────────┘  └─────────┘  └──────────┘
+        │Sessions │  │(Graphs) │  │PDF/DOCX  │
+        └─────────┘  └─────────┘  │XLSX / CSV│
+                                   └──────────┘
 ```
 
 **Infrastructure :**
@@ -51,14 +51,14 @@ Everything runs on a private VPS — no cloud LLM required.
 - Bilingual FR / EN via Telegram inline buttons
 - Supported formats : PDF, DOCX, XLSX, CSV
 - File extraction with session preview
-- Auto analysis : Ollama kimi-k2.5 → structured JSON report
+- Auto analysis : ollama models → structured JSON report
 - Session persistence : PostgreSQL (users + sessions + analytics tables)
 - Per-user credit system
 - Final action menu after each analysis
 
 ## In Progress — Phase 2
 
-- [ ] Custom analysis : 5 interactive questions to refine the report
+- [x] Custom analysis : 5 interactive questions to refine the report (Sprint 2 complete)
 - [ ] Admin commands (`/admin stats`, `/admin credits`)
 - [ ] Daily analytics aggregation (automated Telegram report to admin)
 - [ ] Error monitoring workflow
@@ -89,10 +89,10 @@ DocuMind/
 | Layer | Technology |
 |---|---|
 | Orchestration | n8n self-hosted (Docker) |
-| LLM | Ollama — `kimi-k2.5:cloud` model |
-| Database | PostgreSQL 16-alpine |
+| LLM | Ollama — ollama models |
+| Database | PostgreSQL 16 |
 | File parsing | pdf-parse, xlsx, mammoth (Node.js) |
-| Charts | QuickChart.io (no API key needed) |
+| Charts | QuickChart (no API key needed) |
 | Infra | Docker Compose, Nginx, Let's Encrypt |
 | Platform | Hetzner CAX11 ARM64, Ubuntu 24.04 |
 
@@ -138,7 +138,8 @@ These patterns emerged during development and apply to all n8n workflows on this
 |---|---|---|
 | Phase 1 MVP | Complete | 7 April 2026 |
 | Phase 2 Sprint 1 (bug fixes) | Complete | 8 April 2026 |
-| Phase 2 Sprint 2 (custom analysis) | In progress | — |
+| Phase 2 Sprint 2 (custom analysis) | Complete | 9 April 2026 |
+| Phase 2 Sprint 3 (admin & credits) | In progress | |
 
 ---
 
