@@ -1,0 +1,421 @@
+====================================================================
+WF-04 ANALYSE PERSONNALISÉE — CODE NODES Q5 + ANALYSE + RAPPORT
+Sprint 2.3 — 8 avril 2026
+====================================================================
+Branche "awaiting_q5" : reçoit la dernière réponse,
+déclenche l'analyse Ollama et envoie le rapport final.
+====================================================================
+
+
+--------------------------------------------------------------------
+NODE 8 : "Save Q5 & Set Processing" (branche awaiting_q5)
+--------------------------------------------------------------------
+const data = $input.first().json;
+
+const newAnswer     = { q5: data.user_text };
+const newAnswersStr = JSON.stringify(newAnswer);
+
+return [{
+  json: {
+    session_id:      data.session_id,
+    chat_id:         data.chat_id,
+    language:        data.language,
+    new_answer_json: newAnswersStr,
+    new_state:       'processing_custom',
+    new_question:    5,
+    // Garder pour la suite
+    custom_answers:  data.custom_answers,
+    file_type:       data.file_type,
+    file_name:       data.file_name,
+    extracted_data:  data.extracted_data,
+    extracted_preview: data.extracted_preview
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE 8-SQL : "UPDATE Set Processing" — PostgreSQL node
+--------------------------------------------------------------------
+// Query :
+UPDATE sessions
+SET custom_answers     = custom_answers || $1::jsonb,
+    current_question   = $2,
+    conversation_state = $3,
+    analysis_type      = 'custom',
+    updated_at         = NOW()
+WHERE id = $4
+
+// Query Parameters :
+// $1 = {{ $json.new_answer_json }}
+// $2 = {{ $json.new_question }}
+// $3 = {{ $json.new_state }}
+// $4 = {{ $json.session_id }}
+
+
+--------------------------------------------------------------------
+NODE 8-MSG : "Send Processing Message" — Telegram sendMessage
+--------------------------------------------------------------------
+// Chat ID : {{ $('Save Q5 & Set Processing').first().json.chat_id }}
+// Text :
+{{
+  $('Save Q5 & Set Processing').first().json.language === 'ENG'
+  ? '⚙️ *Personalized analysis in progress...*\n\nYour 5 answers have been recorded. The AI is generating your customized report.\n\n_This may take 30-120 seconds._'
+  : '⚙️ *Analyse personnalisée en cours...*\n\nVos 5 réponses ont été enregistrées. L\'IA génère votre rapport personnalisé.\n\n_Cela peut prendre 30 à 120 secondes._'
+}}
+// Parse Mode : Markdown
+
+
+--------------------------------------------------------------------
+NODE 9 : "Get Full Session Data" — PostgreSQL SELECT
+--------------------------------------------------------------------
+// Query :
+SELECT
+  s.id               AS session_id,
+  s.custom_answers,
+  s.file_type,
+  s.file_name,
+  s.extracted_data,
+  s.extracted_preview,
+  s.file_size_bytes,
+  u.language,
+  u.first_name
+FROM sessions s
+JOIN users u ON s.user_id = u.id
+WHERE s.id = $1
+
+// Query Parameters :
+// $1 = {{ $('Save Q5 & Set Processing').first().json.session_id }}
+
+
+--------------------------------------------------------------------
+NODE 10 : "Build Custom Prompt"
+--------------------------------------------------------------------
+const session    = $input.first().json;
+const answers    = session.custom_answers || {};
+const lang       = session.language || 'FR';
+const fileType   = (session.file_type || 'unknown').toUpperCase();
+const fileName   = session.file_name || 'fichier';
+const preview    = session.extracted_preview || '';
+
+// Extraire les données du fichier (stockées en JSONB)
+let fileData = '';
+try {
+  const rawData = session.extracted_data;
+  if (rawData && typeof rawData === 'object') {
+    // Si c'est déjà un objet JSON (JSONB PostgreSQL)
+    fileData = JSON.stringify(rawData).substring(0, 8000);
+  } else if (typeof rawData === 'string') {
+    fileData = rawData.substring(0, 8000);
+  }
+} catch(e) {
+  fileData = preview.substring(0, 4000);
+}
+
+// Construire le prompt personnalisé
+let prompt = '';
+
+if (lang === 'ENG') {
+  prompt = `You are an expert data analyst. Analyze this ${fileType} file according to the user's specific requirements.
+
+FILE INFORMATION:
+- File name: ${fileName}
+- Type: ${fileType}
+
+USER REQUIREMENTS:
+1. Main goal: ${answers.q1 || 'Not specified'}
+2. Focus columns/sections: ${answers.q2 || 'All available'}
+3. Time period or filter: ${answers.q3 || 'No specific filter'}
+4. Output type: ${answers.q4 || 'Complete analysis'}
+5. Target audience: ${answers.q5 || 'General'}
+
+FILE DATA (truncated to 8000 chars):
+${fileData}
+
+MANDATORY OUTPUT FORMAT (valid JSON only, no markdown, no explanation outside JSON):
+{
+  "executive_summary": "Concise summary addressing the main goal (3-5 sentences)",
+  "focused_analysis": {
+    "key_findings": ["finding 1", "finding 2", "finding 3"],
+    "patterns_detected": ["pattern 1", "pattern 2"],
+    "anomalies": ["anomaly 1 (or 'None detected')"]
+  },
+  "insights": ["insight 1", "insight 2", "insight 3"],
+  "recommendations": ["recommendation 1", "recommendation 2", "recommendation 3"],
+  "audience_adaptation": "How this analysis is tailored for: ${answers.q5 || 'general audience'}",
+  "data_quality_score": "1-10",
+  "limitations": "Any data limitation or missing information"
+}`;
+} else {
+  prompt = `Tu es un expert data analyst. Analyse ce fichier ${fileType} selon les exigences spécifiques de l'utilisateur.
+
+INFORMATIONS FICHIER :
+- Nom : ${fileName}
+- Type : ${fileType}
+
+EXIGENCES UTILISATEUR :
+1. Objectif principal : ${answers.q1 || 'Non précisé'}
+2. Colonnes/sections ciblées : ${answers.q2 || 'Toutes disponibles'}
+3. Période ou filtre : ${answers.q3 || 'Aucun filtre spécifique'}
+4. Type de livrable : ${answers.q4 || 'Analyse complète'}
+5. Audience cible : ${answers.q5 || 'Général'}
+
+DONNÉES DU FICHIER (tronquées à 8000 caractères) :
+${fileData}
+
+FORMAT DE SORTIE OBLIGATOIRE (JSON valide uniquement, sans markdown, sans texte hors JSON) :
+{
+  "resume_executif": "Résumé concis répondant à l'objectif principal (3-5 phrases)",
+  "analyse_ciblee": {
+    "points_cles": ["point 1", "point 2", "point 3"],
+    "tendances_detectees": ["tendance 1", "tendance 2"],
+    "anomalies": ["anomalie 1 (ou 'Aucune détectée')"]
+  },
+  "insights": ["insight 1", "insight 2", "insight 3"],
+  "recommandations": ["recommandation 1", "recommandation 2", "recommandation 3"],
+  "adaptation_audience": "Comment cette analyse est adaptée pour : ${answers.q5 || 'audience générale'}",
+  "score_qualite_donnees": "1-10",
+  "limites": "Toute limitation des données ou information manquante"
+}`;
+}
+
+return [{
+  json: {
+    user_prompt:  prompt,
+    session_id:   session.session_id,
+    chat_id:      $('Save Q5 & Set Processing').first().json.chat_id,
+    language:     lang,
+    file_name:    fileName,
+    custom_answers: answers
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE 11 : "Basic LLM Chain" — À configurer MANUELLEMENT dans n8n
+--------------------------------------------------------------------
+// Type de node : Basic LLM Chain
+// Connecter en subnode : Ollama Chat Model
+//   - Credential : http://ollama:11434
+//   - Model : kimi-k2.5:cloud
+//   - Temperature : 0.3
+//   - Max Tokens : 4000
+//   - Num CTX : 8192
+//
+// Prompt Source : Define below
+// Prompt : {{ $json.user_prompt }}  (mode Expression — icône éclair)
+//
+// ⚠️ PAS de Chat Messages System Prompt ici — tout est dans user_prompt
+
+
+--------------------------------------------------------------------
+NODE 12 : "Parse Custom Response"
+--------------------------------------------------------------------
+// Gère les deux formats de sortie du Basic LLM Chain selon version n8n
+const buildInput   = $('Build Custom Prompt').first().json;
+const chainOutput  = $input.first().json;
+
+const rawOutput = (chainOutput.response && chainOutput.response.text)
+               || chainOutput.text
+               || chainOutput.output
+               || (typeof chainOutput.response === 'string' ? chainOutput.response : '')
+               || '';
+
+let parsed = null;
+let parseError = null;
+
+// Tentative 1 : JSON direct
+try {
+  parsed = JSON.parse(rawOutput.trim());
+} catch(e1) {
+  // Tentative 2 : extraire JSON depuis texte markdown
+  const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch(e2) {
+      parseError = e2.message;
+    }
+  }
+}
+
+// Fallback : structure vide si parsing échoue
+if (!parsed) {
+  parsed = {
+    resume_executif:     rawOutput.substring(0, 500) || 'Analyse générée',
+    executive_summary:   rawOutput.substring(0, 500) || 'Analysis generated',
+    analyse_ciblee:      { points_cles: [], tendances_detectees: [], anomalies: [] },
+    focused_analysis:    { key_findings: [], patterns_detected: [], anomalies: [] },
+    insights:            [],
+    recommandations:     [],
+    recommendations:     [],
+    adaptation_audience: '',
+    audience_adaptation: '',
+    score_qualite_donnees: '?',
+    data_quality_score:  '?',
+    limites:             parseError || 'Erreur de parsing JSON',
+    limitations:         parseError || 'JSON parsing error'
+  };
+}
+
+return [{
+  json: {
+    parsed_response: parsed,
+    raw_output:      rawOutput,
+    session_id:      buildInput.session_id,
+    chat_id:         buildInput.chat_id,
+    language:        buildInput.language,
+    file_name:       buildInput.file_name,
+    custom_answers:  buildInput.custom_answers,
+    response_time:   Date.now()
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE 13 : "Format Custom Report"
+--------------------------------------------------------------------
+const data    = $input.first().json;
+const r       = data.parsed_response;
+const lang    = data.language;
+const answers = data.custom_answers || {};
+
+let report = '';
+const startTime = Date.now();
+
+if (lang === 'ENG') {
+  const summary   = r.executive_summary || 'N/A';
+  const findings  = (r.focused_analysis?.key_findings || r.insights || []).slice(0, 4);
+  const patterns  = (r.focused_analysis?.patterns_detected || []).slice(0, 3);
+  const anomalies = (r.focused_analysis?.anomalies || []).slice(0, 2);
+  const insights  = (r.insights || []).slice(0, 3);
+  const recs      = (r.recommendations || []).slice(0, 3);
+  const quality   = r.data_quality_score || '?';
+  const audience  = r.audience_adaptation || '';
+  const limits    = r.limitations || 'None';
+
+  report = `📊 *PERSONALIZED ANALYSIS — ${data.file_name}*
+_Target audience: ${answers.q5 || 'General'}_
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📋 *EXECUTIVE SUMMARY*
+━━━━━━━━━━━━━━━━━━━━━━━
+${summary}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🔍 *KEY FINDINGS*
+━━━━━━━━━━━━━━━━━━━━━━━
+${findings.map((f, i) => `${i+1}. ${f}`).join('\n') || 'N/A'}
+
+${patterns.length > 0 ? `📈 *PATTERNS DETECTED*\n${patterns.map(p => `• ${p}`).join('\n')}\n` : ''}
+${anomalies.length > 0 && anomalies[0] !== 'None detected' ? `⚠️ *ANOMALIES*\n${anomalies.map(a => `• ${a}`).join('\n')}\n` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+💡 *INSIGHTS*
+━━━━━━━━━━━━━━━━━━━━━━━
+${insights.map((i, idx) => `${idx+1}. ${i}`).join('\n') || 'N/A'}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+✅ *RECOMMENDATIONS*
+━━━━━━━━━━━━━━━━━━━━━━━
+${recs.map((r, i) => `${i+1}. ${r}`).join('\n') || 'N/A'}
+
+${audience ? `━━━━━━━━━━━━━━━━━━━━━━━\n🎯 *AUDIENCE ADAPTATION*\n━━━━━━━━━━━━━━━━━━━━━━━\n${audience}\n` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Data quality: ${quality}/10 | Goal: ${answers.q1 || 'N/A'}
+${limits !== 'None' ? `⚠️ Limits: ${limits}` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━
+_Personalized analysis • Intelligence Bot_`;
+
+} else {
+  const summary   = r.resume_executif   || r.executive_summary || 'N/A';
+  const findings  = (r.analyse_ciblee?.points_cles || r.insights || []).slice(0, 4);
+  const tendances = (r.analyse_ciblee?.tendances_detectees || []).slice(0, 3);
+  const anomalies = (r.analyse_ciblee?.anomalies || []).slice(0, 2);
+  const insights  = (r.insights || []).slice(0, 3);
+  const recs      = (r.recommandations || r.recommendations || []).slice(0, 3);
+  const quality   = r.score_qualite_donnees || r.data_quality_score || '?';
+  const audience  = r.adaptation_audience || r.audience_adaptation || '';
+  const limits    = r.limites || r.limitations || 'Aucune';
+
+  report = `📊 *ANALYSE PERSONNALISÉE — ${data.file_name}*
+_Audience cible : ${answers.q5 || 'Général'}_
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📋 *RÉSUMÉ EXÉCUTIF*
+━━━━━━━━━━━━━━━━━━━━━━━
+${summary}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🔍 *POINTS CLÉS*
+━━━━━━━━━━━━━━━━━━━━━━━
+${findings.map((f, i) => `${i+1}. ${f}`).join('\n') || 'N/A'}
+
+${tendances.length > 0 ? `📈 *TENDANCES DÉTECTÉES*\n${tendances.map(t => `• ${t}`).join('\n')}\n` : ''}
+${anomalies.length > 0 && anomalies[0] !== 'Aucune détectée' ? `⚠️ *ANOMALIES*\n${anomalies.map(a => `• ${a}`).join('\n')}\n` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+💡 *INSIGHTS*
+━━━━━━━━━━━━━━━━━━━━━━━
+${insights.map((i, idx) => `${idx+1}. ${i}`).join('\n') || 'N/A'}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+✅ *RECOMMANDATIONS*
+━━━━━━━━━━━━━━━━━━━━━━━
+${recs.map((r, i) => `${i+1}. ${r}`).join('\n') || 'N/A'}
+
+${audience ? `━━━━━━━━━━━━━━━━━━━━━━━\n🎯 *ADAPTATION AUDIENCE*\n━━━━━━━━━━━━━━━━━━━━━━━\n${audience}\n` : ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 Qualité données : ${quality}/10 | Objectif : ${answers.q1 || 'N/A'}
+${limits !== 'Aucune' ? `⚠️ Limites : ${limits}` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━
+_Analyse personnalisée • Intelligence Bot_`;
+}
+
+return [{
+  json: {
+    report_text:  report,
+    session_id:   data.session_id,
+    chat_id:      data.chat_id,
+    language:     lang,
+    raw_response: JSON.stringify(r).substring(0, 4000)
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE 14-SQL : "UPDATE Session Completed" — PostgreSQL node
+--------------------------------------------------------------------
+// Query :
+UPDATE sessions
+SET status             = 'completed',
+    conversation_state = 'idle',
+    llm_used           = 'ollama_kimi',
+    llm_response       = $1::jsonb,
+    updated_at         = NOW()
+WHERE id = $2
+
+// Query Parameters :
+// $1 = {{ $('Format Custom Report').first().json.raw_response }}
+// $2 = {{ $('Format Custom Report').first().json.session_id }}
+
+
+--------------------------------------------------------------------
+NODE 15 : "Send Final Menu" — Telegram sendMessage
+--------------------------------------------------------------------
+// Chat ID : {{ $('Format Custom Report').first().json.chat_id }}
+// Text :
+{{
+  $('Format Custom Report').first().json.language === 'ENG'
+  ? '✅ *Analysis complete!*\n\nWhat would you like to do next?'
+  : '✅ *Analyse terminée !*\n\nQue souhaitez-vous faire maintenant ?'
+}}
+// Parse Mode : Markdown
+//
+// Reply Markup : Inline Keyboard (configurer MANUELLEMENT)
+// Row 1 :
+//   Button 1 : Text = "📁 Nouveau fichier" / "📁 New file"
+//              Callback Data = "new_file"
+//   Button 2 : Text = "❓ Aide" / "❓ Help"
+//              Callback Data = "help"

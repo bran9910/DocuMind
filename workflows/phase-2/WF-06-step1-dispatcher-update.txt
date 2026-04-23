@@ -1,0 +1,54 @@
+================================================================================
+WF-06 SPRINT 3 — ÉTAPE 1 : MISE À JOUR DU DISPATCHER
+================================================================================
+Nœud à modifier : "Dispatcher"
+Action : remplacer le code actuel par le code ci-dessous
+(ajoute la détection des commandes /admin et /cancel explicite)
+================================================================================
+
+--- NOUVEAU CODE DISPATCHER (remplacer l'ancien entièrement) ---
+
+const update = $input.first().json;
+const hasCallback = !!update.callback_query;
+const msg = update.message;
+
+if (hasCallback) {
+  const raw = (update.callback_query.data || '').replace(/^=/, '');
+  let route = 'callback_other';
+  if (raw.startsWith('lang_'))                                    route = 'callback_lang';
+  else if (raw.startsWith('auto_') || raw.startsWith('custom_')) route = 'callback_analysis';
+  return [{ json: { ...update, _route: route } }];
+}
+
+if (msg) {
+  const text = (msg.text || '').trim();
+
+  if (msg.document)           return [{ json: { ...update, _route: 'file' } }];
+  if (text === '/start')      return [{ json: { ...update, _route: 'start' } }];
+  if (text === '/cancel')     return [{ json: { ...update, _route: 'text' } }];  // géré par IF Cancel
+  if (text.startsWith('/admin')) return [{ json: { ...update, _route: 'admin' } }];
+
+  // Tout autre texte → questions Q1-Q5
+  return [{ json: { ...update, _route: 'text' } }];
+}
+
+return [];
+
+--- FIN CODE ---
+
+
+================================================================================
+ÉTAPE 2 : AJOUTER UN 6e OUTPUT AU SWITCH "Route by Update Type"
+================================================================================
+Dans le Switch "Route by Update Type", ajouter une 5e règle AVANT le fallback :
+
+  Règle 4 — Output "admin"
+    Field   : {{ $json._route }}
+    Equals  : admin
+
+Le fallback (Extra Output) devient output 5 → reste connecté à "Extract Message Data"
+
+Connexion à créer :
+  Switch output 4 (admin) → "Extract Admin Command"  ← nouveau nœud (voir étape 3)
+
+================================================================================

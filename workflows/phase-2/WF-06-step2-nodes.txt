@@ -1,0 +1,383 @@
+================================================================================
+WF-06 SPRINT 3 — ÉTAPE 3 : NŒUDS À CRÉER (dans l'ordre de connexion)
+================================================================================
+Tous ces nœuds se placent à la suite du Switch output 4 (admin).
+Créer dans cet ordre, puis connecter comme indiqué en bas.
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 1 — "Extract Admin Command"  (type: Code)
+────────────────────────────────────────────────────────────────────────────────
+const msg = $input.first().json.message;
+const text = (msg.text || '').trim();
+const chatId = msg.chat.id;
+const telegramId = msg.from.id;
+
+// Exemples : /admin stats | /admin credits 123456789 50 | /admin ban 123456789
+const parts = text.split(/\s+/);
+const subCommand = (parts[1] || '').toLowerCase();  // stats, credits, ban, unban, list_users, analytics
+const arg1 = parts[2] || '';  // telegram_id ou @username
+const arg2 = parts[3] || '';  // valeur pour credits
+
+return [{
+  json: {
+    chat_id: chatId,
+    telegram_id: telegramId,
+    sub_command: subCommand,
+    arg1: arg1.replace('@', ''),
+    arg2: arg2,
+    raw_text: text
+  }
+}];
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 2 — "Check Admin Rights"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Query :
+SELECT is_admin, first_name FROM users WHERE telegram_id = $1 LIMIT 1
+
+Query Parameters (Add option → Query Parameters) :
+={{ $json.telegram_id }}
+
+Credential : Intelligence Bot DB
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 3 — "IF Is Admin"  (type: IF)
+────────────────────────────────────────────────────────────────────────────────
+Condition :
+  Left value  : {{ $json.is_admin }}
+  Operation   : boolean → is true
+
+TRUE  → continuer vers "Switch Admin Command"
+FALSE → continuer vers "Send Not Admin"
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 4 — "Send Not Admin"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Chat ID : {{ $('Extract Admin Command').first().json.chat_id }}
+Text    :
+⛔ Accès refusé.
+Cette commande est réservée aux administrateurs.
+
+Parse Mode : (aucun)
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 5 — "Switch Admin Command"  (type: Switch)
+────────────────────────────────────────────────────────────────────────────────
+Field à évaluer : {{ $('Extract Admin Command').first().json.sub_command }}
+
+Règle 0 : equals → stats
+Règle 1 : equals → credits
+Règle 2 : equals → ban
+Règle 3 : equals → unban
+Règle 4 : equals → list_users
+Règle 5 : equals → analytics
+Fallback (Extra Output) → "Send Admin Help"
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 6a — "Query Stats"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch output 0 (stats)
+
+Query :
+SELECT
+  (SELECT COUNT(*) FROM users WHERE is_active = true)              AS active_users,
+  (SELECT COUNT(*) FROM users WHERE is_active = false)             AS banned_users,
+  (SELECT COUNT(*) FROM sessions)                                  AS total_sessions,
+  (SELECT COUNT(*) FROM sessions WHERE status = 'completed')       AS completed_sessions,
+  (SELECT COUNT(*) FROM sessions WHERE analysis_type = 'auto')     AS auto_sessions,
+  (SELECT COUNT(*) FROM sessions WHERE analysis_type = 'custom')   AS custom_sessions,
+  (SELECT COUNT(*) FROM sessions WHERE created_at >= NOW() - INTERVAL '24 hours') AS sessions_today,
+  (SELECT COALESCE(SUM(llm_tokens_used),0) FROM sessions)          AS total_tokens
+
+(pas de queryParameters pour cette requête)
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 6b — "Send Stats"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis "Query Stats"
+
+Chat ID : {{ $('Extract Admin Command').first().json.chat_id }}
+Text (mode Expression) :
+=📊 *STATISTIQUES — Intelligence Bot*
+
+👥 Utilisateurs actifs : {{ $json.active_users }}
+🚫 Utilisateurs bannis : {{ $json.banned_users }}
+
+📁 Sessions totales     : {{ $json.total_sessions }}
+✅ Sessions complétées  : {{ $json.completed_sessions }}
+🤖 Analyses auto        : {{ $json.auto_sessions }}
+🎯 Analyses custom      : {{ $json.custom_sessions }}
+📅 Sessions aujourd'hui : {{ $json.sessions_today }}
+
+🔢 Tokens utilisés (total) : {{ $json.total_tokens }}
+
+Parse Mode : Markdown
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 7a — "Query User for Credits"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch output 1 (credits)
+
+Query :
+SELECT id, first_name, credits_remaining
+FROM users
+WHERE telegram_id = $1
+LIMIT 1
+
+Query Parameters : {{ $('Extract Admin Command').first().json.arg1 }}
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 7b — "Update Credits"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis "Query User for Credits"
+
+Query :
+UPDATE users
+SET credits_remaining = $2,
+    updated_at = NOW()
+WHERE telegram_id = $1
+RETURNING first_name, credits_remaining
+
+Query Parameters :
+={{ $('Extract Admin Command').first().json.arg1 }}, {{ parseInt($('Extract Admin Command').first().json.arg2) }}
+
+NOTE : arg2 est la nouvelle valeur absolue des crédits.
+  Ex : /admin credits 123456789 100  → met les crédits à 100
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 7c — "Send Credits Confirmation"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Chat ID : {{ $('Extract Admin Command').first().json.chat_id }}
+Text (mode Expression) :
+=✅ Crédits mis à jour
+
+👤 Utilisateur : {{ $json.first_name }}
+💳 Nouveaux crédits : {{ $json.credits_remaining }}
+
+Parse Mode : Markdown
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 8a — "Ban User"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch output 2 (ban)
+
+Query :
+UPDATE users
+SET is_active = false
+WHERE telegram_id = $1
+RETURNING first_name, telegram_id
+
+Query Parameters : {{ $('Extract Admin Command').first().json.arg1 }}
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 8b — "Send Ban Confirmation"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Chat ID : {{ $('Extract Admin Command').first().json.chat_id }}
+Text (mode Expression) :
+=🚫 Utilisateur banni
+
+👤 {{ $json.first_name }} (ID: {{ $json.telegram_id }})
+Accès au bot révoqué.
+
+Parse Mode : Markdown
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 9a — "Unban User"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch output 3 (unban)
+
+Query :
+UPDATE users
+SET is_active = true
+WHERE telegram_id = $1
+RETURNING first_name, telegram_id
+
+Query Parameters : {{ $('Extract Admin Command').first().json.arg1 }}
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 9b — "Send Unban Confirmation"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Chat ID : {{ $('Extract Admin Command').first().json.chat_id }}
+Text (mode Expression) :
+=✅ Utilisateur réactivé
+
+👤 {{ $json.first_name }} (ID: {{ $json.telegram_id }})
+Accès au bot restauré.
+
+Parse Mode : Markdown
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 10a — "Query List Users"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch output 4 (list_users)
+
+Query :
+SELECT telegram_id, first_name, telegram_username, language,
+       credits_remaining, is_active, is_admin,
+       TO_CHAR(last_active_at, 'DD/MM/YYYY HH24:MI') AS last_active
+FROM users
+ORDER BY last_active_at DESC
+LIMIT 20
+
+(pas de queryParameters)
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 10b — "Format User List"  (type: Code)
+────────────────────────────────────────────────────────────────────────────────
+const rows = $input.all();
+const chat_id = $('Extract Admin Command').first().json.chat_id;
+
+let lines = rows.map(r => {
+  const u = r.json;
+  const status = u.is_active ? '✅' : '🚫';
+  const admin  = u.is_admin  ? ' 👑' : '';
+  const name   = u.first_name || u.telegram_username || 'Inconnu';
+  return `${status}${admin} *${name}* | ID: \`${u.telegram_id}\` | 💳${u.credits_remaining} | ${u.last_active}`;
+});
+
+return [{
+  json: {
+    chat_id,
+    text: `👥 *LISTE UTILISATEURS (${rows.length})*\n\n` + lines.join('\n')
+  }
+}];
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 10c — "Send User List"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Chat ID : {{ $json.chat_id }}
+Text    : {{ $json.text }}
+Parse Mode : Markdown
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 11a — "Query Analytics"  (type: PostgreSQL → Execute Query)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch output 5 (analytics)
+
+Query :
+SELECT
+  TO_CHAR(created_at::date, 'DD/MM') AS jour,
+  COUNT(*)                            AS sessions,
+  COUNT(*) FILTER (WHERE status = 'completed')    AS ok,
+  COUNT(*) FILTER (WHERE status = 'error')        AS errors,
+  COALESCE(SUM(llm_tokens_used), 0)               AS tokens
+FROM sessions
+WHERE created_at >= NOW() - INTERVAL '7 days'
+GROUP BY created_at::date
+ORDER BY created_at::date DESC
+
+(pas de queryParameters)
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 11b — "Format Analytics"  (type: Code)
+────────────────────────────────────────────────────────────────────────────────
+const rows = $input.all();
+const chat_id = $('Extract Admin Command').first().json.chat_id;
+
+let lines = rows.map(r => {
+  const d = r.json;
+  return `📅 ${d.jour} | ${d.sessions} sessions | ✅${d.ok} ❌${d.errors} | 🔢${d.tokens} tokens`;
+});
+
+return [{
+  json: {
+    chat_id,
+    text: `📈 *ANALYTICS — 7 derniers jours*\n\n` + (lines.length ? lines.join('\n') : '_Aucune donnée_')
+  }
+}];
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 11c — "Send Analytics"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Chat ID : {{ $json.chat_id }}
+Text    : {{ $json.text }}
+Parse Mode : Markdown
+
+
+────────────────────────────────────────────────────────────────────────────────
+NŒUD 12 — "Send Admin Help"  (type: Telegram → Send Message)
+────────────────────────────────────────────────────────────────────────────────
+Connecté depuis Switch Admin fallback (commande inconnue)
+
+Chat ID : {{ $('Extract Admin Command').first().json.chat_id }}
+Text :
+ℹ️ *Commandes admin disponibles :*
+
+`/admin stats` — Statistiques globales
+`/admin credits <telegram_id> <valeur>` — Modifier crédits
+`/admin ban <telegram_id>` — Bannir un utilisateur
+`/admin unban <telegram_id>` — Réactiver un utilisateur
+`/admin list_users` — Liste des 20 derniers utilisateurs
+`/admin analytics` — Analytics 7 derniers jours
+
+Parse Mode : Markdown
+
+
+================================================================================
+CONNEXIONS COMPLÈTES DU FLUX ADMIN
+================================================================================
+
+Switch "Route by Update Type" output 4
+    → Extract Admin Command
+        → Check Admin Rights
+            → IF Is Admin
+                TRUE  → Switch Admin Command
+                            output 0 (stats)       → Query Stats → Send Stats
+                            output 1 (credits)     → Query User for Credits → Update Credits → Send Credits Confirmation
+                            output 2 (ban)         → Ban User → Send Ban Confirmation
+                            output 3 (unban)       → Unban User → Send Unban Confirmation
+                            output 4 (list_users)  → Query List Users → Format User List → Send User List
+                            output 5 (analytics)   → Query Analytics → Format Analytics → Send Analytics
+                            fallback               → Send Admin Help
+                FALSE → Send Not Admin
+
+
+================================================================================
+ÉTAPE FINALE — SE DÉSIGNER ADMIN
+================================================================================
+
+Se connecter en SSH sur le VPS :
+  ssh bran9910@204.168.199.123
+
+Accéder à PostgreSQL :
+  docker exec -it n8n-postgres psql -U n8n -d intelligence_bot
+
+Trouver son telegram_id :
+  SELECT telegram_id, first_name FROM users ORDER BY created_at LIMIT 10;
+
+Se désigner admin (remplacer TON_ID par la valeur trouvée) :
+  UPDATE users SET is_admin = true WHERE telegram_id = TON_ID;
+
+Vérifier :
+  SELECT telegram_id, first_name, is_admin FROM users WHERE is_admin = true;
+
+Quitter :
+  \q
+
+Tester dans Telegram :
+  /admin stats        → doit afficher les statistiques
+  /admin list_users   → doit lister les utilisateurs
+  /admin help         → doit afficher l'aide (commande inconnue → fallback)
+
+================================================================================

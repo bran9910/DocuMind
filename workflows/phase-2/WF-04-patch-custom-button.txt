@@ -1,0 +1,159 @@
+====================================================================
+PATCH — BRANCHEMENT BOUTON "PERSONNALISÉE" DANS WF-04
+Sprint 2.5 — 9 avril 2026
+====================================================================
+
+SITUATION ACTUELLE dans WF-04 :
+  [Telegram Trigger] → [Extract Callback Data] → [Send Analyzing Message]
+  Le node "Extract Callback Data" retourne [] pour custom_* → rien ne se passe.
+
+MODIFICATIONS À FAIRE :
+  1. Remplacer le code de "Extract Callback Data"
+  2. Couper le fil entre "Extract Callback Data" → "Send Analyzing Message"
+  3. Ajouter un IF node "Is Auto?"
+  4. Ajouter 3 nodes pour la branche custom
+  5. Recâbler
+
+RÉSULTAT FINAL :
+  [Telegram Trigger]
+      ↓
+  [Extract Callback Data]  ← code modifié
+      ↓
+  [IF Is Auto?]
+    YES → [Send Analyzing Message] → (suite existante auto inchangée)
+    NO  → [Setup Custom Mode] → [UPDATE Session Custom] → [Send Q1]
+
+
+====================================================================
+ÉTAPE 1 — NOUVEAU CODE pour "Extract Callback Data"
+====================================================================
+Ouvrir le node "Extract Callback Data" dans n8n → remplacer TOUT le code :
+
+// Gère les callbacks auto_N et custom_N
+// Pattern §8 : .replace(/^=/, '') obligatoire
+const raw = $input.first().json.callback_query.data.replace(/^=/, '');
+
+if (!raw.startsWith('auto_') && !raw.startsWith('custom_')) {
+  return [];
+}
+
+const parts = raw.split('_');
+const sessionId = parseInt(parts[parts.length - 1]);
+const cbQuery = $input.first().json.callback_query;
+
+return [{
+  json: {
+    is_auto:     raw.startsWith('auto_'),
+    analysis_type: raw.startsWith('auto_') ? 'auto' : 'custom',
+    session_id:  sessionId,
+    chat_id:     cbQuery.message.chat.id,
+    telegram_id: cbQuery.from.id,
+    message_id:  cbQuery.message.message_id,
+    language:    cbQuery.from.language_code || 'fr'
+  }
+}];
+
+
+====================================================================
+ÉTAPE 2 — COUPER le fil
+====================================================================
+Dans n8n, supprimer la connexion :
+  "Extract Callback Data" → "Send Analyzing Message"
+(clic sur le fil → touche Suppr)
+
+
+====================================================================
+ÉTAPE 3 — AJOUTER le IF node "Is Auto?"
+====================================================================
+Ajouter un IF node entre "Extract Callback Data" et "Send Analyzing Message".
+
+Config du IF node :
+  - Name : "Is Auto?"
+  - Value 1 : {{ $json.is_auto }}
+  - Operation : equals
+  - Value 2 : true
+  - Type : Boolean
+
+Connections :
+  "Extract Callback Data" → "Is Auto?" (input)
+  "Is Auto?" output TRUE  → "Send Analyzing Message" (existant, inchangé)
+  "Is Auto?" output FALSE → "Setup Custom Mode" (nouveau, étape 4)
+
+
+====================================================================
+ÉTAPE 4 — AJOUTER 3 nodes pour la branche custom
+====================================================================
+
+---- NODE A : "Setup Custom Mode" (Code node) ----
+
+const cb = $input.first().json;
+const langCode = cb.language || 'fr';
+const language = langCode.startsWith('en') ? 'ENG' : 'FR';
+
+return [{
+  json: {
+    session_id: cb.session_id,
+    chat_id:    cb.chat_id,
+    language:   language
+  }
+}];
+
+
+---- NODE B : "UPDATE Session Custom" (PostgreSQL node) ----
+
+Query :
+  UPDATE sessions
+  SET conversation_state = 'awaiting_custom',
+      current_question   = 1,
+      analysis_type      = 'custom',
+      updated_at         = NOW()
+  WHERE id = $1
+
+Query Parameters (Add option → Query Parameters) :
+  $1 = {{ $json.session_id }}
+
+
+---- NODE C : "Send Q1" (Telegram sendMessage node) ----
+
+Chat ID :
+  {{ $('Setup Custom Mode').first().json.chat_id }}
+
+Text (mode Expression — icône éclair) :
+  {{ $('Setup Custom Mode').first().json.language === 'ENG'
+  ? '🎯 *Custom Analysis — 5 questions*\n\nI will ask you 5 quick questions to tailor the analysis to your needs.\n\n*Question 1/5*\nWhat is the main goal of this analysis?\n\n_(Example: identify sales trends, analyze team performance)_\n\n_Type /cancel at any time to abort._'
+  : '🎯 *Analyse Personnalisée — 5 questions*\n\nJe vais vous poser 5 questions rapides pour adapter l\'analyse à vos besoins.\n\n*Question 1/5*\nQuel est l\'objectif principal de cette analyse ?\n\n_(Exemple : identifier les tendances de vente, analyser la performance d\'équipe)_\n\n_Tapez /cancel à tout moment pour annuler._' }}
+
+Parse Mode : Markdown
+
+
+====================================================================
+ÉTAPE 5 — CÂBLAGE FINAL branche custom
+====================================================================
+
+  [Is Auto?] output FALSE
+      ↓
+  [Setup Custom Mode]
+      ↓
+  [UPDATE Session Custom]
+      ↓
+  [Send Q1]
+      ↓
+  (fin — WF-04C prend le relais dès la prochaine réponse texte)
+
+
+====================================================================
+VÉRIFICATION APRÈS MODIFICATION
+====================================================================
+
+Test rapide dans n8n (mode manuel) :
+  1. Envoyer un fichier CSV dans Telegram → aperçu affiché ✓
+  2. Cliquer "Personnalisée" → WF-04 reçoit le callback custom_N ✓
+  3. "Extract Callback Data" retourne is_auto=false ✓
+  4. "Is Auto?" branche sur FALSE ✓
+  5. Session state → awaiting_custom en DB ✓
+  6. Q1 envoyée dans Telegram ✓
+  7. Répondre → WF-04C reçoit le message et enchaîne Q2 ✓
+
+Test /cancel :
+  - Pendant Q3, taper /cancel
+  - WF-04C met conversation_state='idle' + envoie "Analyse annulée" ✓

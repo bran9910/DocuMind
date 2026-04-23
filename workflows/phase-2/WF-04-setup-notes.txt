@@ -1,0 +1,106 @@
+===== SETUP WF-04 — Auto Analysis (AI Agent) =====
+À faire AVANT d'importer le JSON dans n8n
+
+
+─────────────────────────────────────────
+ÉTAPE 1 — Créer la credential Grok API
+─────────────────────────────────────────
+Dans n8n → Credentials → New → "OpenAI" :
+  Name     : Grok API (xAI)
+  API Key  : [ta clé Grok depuis console.x.ai]
+  Base URL : https://api.x.ai/v1
+
+Copier l'ID de la credential créée.
+Remplacer "REMPLACER_PAR_ID_GROK" dans le JSON par cet ID.
+
+
+─────────────────────────────────────────
+ÉTAPE 2 — Mettre à jour la credential Postgres
+─────────────────────────────────────────
+Trouver l'ID de ta credential PostgreSQL existante (celle utilisée dans WF-01/02/03).
+Remplacer "REMPLACER_PAR_ID_POSTGRES" dans le JSON par cet ID (2 occurrences).
+Remplacer "Intelligence Bot DB" par le vrai nom de la credential si différent.
+
+
+─────────────────────────────────────────
+ÉTAPE 3 — Importer le JSON dans n8n
+─────────────────────────────────────────
+n8n → Workflows → Import → sélectionner WF-04-Auto-Analysis-AI-Agent.json
+
+
+─────────────────────────────────────────
+ÉTAPE 4 — Ajouter les Query Parameters (obligatoire)
+─────────────────────────────────────────
+Pattern n8n : les queryParams ne s'importent PAS depuis JSON.
+
+Node "Get Session from DB" :
+  → Ouvrir le node → Options → Add option → Query Parameters
+  → Parameter 1 : {{ $('Extract Callback Data').item.json.session_id }}
+
+Node "Update Session DB" :
+  → Ouvrir le node → Options → Add option → Query Parameters
+  → Parameter 1 : {{ $json.p1 }}
+  → Parameter 2 : {{ $json.p2 }}
+  → Parameter 3 : {{ $json.p3 }}
+  → Parameter 4 : {{ $json.p4 }}
+
+
+─────────────────────────────────────────
+ÉTAPE 5 — Configurer le Chat Model Grok
+─────────────────────────────────────────
+Ouvrir le node "Grok Chat Model" :
+  → Vérifier que la credential "Grok API (xAI)" est sélectionnée
+  → Model : taper "grok-3" (ou "grok-2-latest" si grok-3 n'est pas disponible)
+  → Temperature : 0.3
+  → Max Tokens : 4000
+
+
+─────────────────────────────────────────
+ÉTAPE 6 — Configurer Send Final Menu (boutons inline)
+─────────────────────────────────────────
+Pattern n8n : Reply Markup ne s'importe pas depuis JSON.
+
+Ouvrir le node "Send Final Menu" :
+  → Additional Fields → Reply Markup → Inline Keyboard
+  → Add Row → Add Button :
+      Button 1 : Text = "📁 Nouveau fichier"   | Callback = new_file
+      Button 2 : Text = "📊 Analyser autre"    | Callback = new_file
+  (adapter selon les callbacks gérés par WF-02)
+
+
+─────────────────────────────────────────
+ÉTAPE 7 — Activer le workflow
+─────────────────────────────────────────
+Attendre 30 secondes après avoir publié WF-02/03 (rate limit setWebhook Telegram).
+Puis activer WF-04 → Publish.
+
+
+─────────────────────────────────────────
+ARCHITECTURE DU WORKFLOW
+─────────────────────────────────────────
+
+Telegram Trigger (callback auto_)
+  → Extract Callback Data       [fix préfixe =, extrait session_id]
+  → Send Analyzing Message      [⏳ message immédiat]
+  → Get Session from DB         [SELECT avec queryParam $1 = session_id]
+  → Prepare Agent Input         [decode extracted_data, build prompt]
+  → Grok Agent ──────────────── Grok Chat Model (OpenAI compat.)
+  → Parse Agent Response        [JSON.parse output agent]
+  → Format Report Message       [build message Telegram]
+  → Send Report                 [envoie le rapport]
+  → Generate Chart URLs         [construit URLs QuickChart]
+      ├─→ Prepare DB Params ──→ Update Session DB ──→ Send Final Menu
+      └─→ Split Charts ──────→ Send Chart Photo (optionnel, peut retourner [])
+
+
+─────────────────────────────────────────
+AJOUTER OLLAMA FALLBACK (optionnel, après test Grok)
+─────────────────────────────────────────
+1. Sur "Grok Agent" → cocher "Continue on Fail" → Output = Error Output
+2. Ajouter node "Ollama Agent" (@n8n/n8n-nodes-langchain.agent)
+   text = {{ $('Prepare Agent Input').item.json.user_prompt }}
+   systemMessage = même que Grok Agent
+3. Connecter "Ollama Chat Model" (lmChatOllama, model=kimi-k2.5:cloud)
+4. Ajouter node "Set Ollama Meta" (Code) :
+   return [{ json: { ...$('Prepare Agent Input').item.json, output: $input.first().json.output, llm_used: 'ollama', start_time: $('Prepare Agent Input').item.json.start_time } }];
+5. Connecter : Grok error → Ollama Agent → Set Ollama Meta → Parse Agent Response (Merge)

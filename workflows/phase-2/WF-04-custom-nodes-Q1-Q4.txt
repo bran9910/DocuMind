@@ -1,0 +1,296 @@
+====================================================================
+WF-04 ANALYSE PERSONNALISÉE — CODE NODES Q1 à Q4
+Sprint 2.3 — 8 avril 2026
+====================================================================
+Chaque section correspond à UN Code node dans n8n.
+Copier-coller le contenu dans le champ "JavaScript" du node.
+====================================================================
+
+
+--------------------------------------------------------------------
+NODE 1 : "Extract Message Data"
+--------------------------------------------------------------------
+// Extrait chat_id, texte, et détecte /cancel
+const msg = $input.first().json.message
+         || $input.first().json;
+
+const chatId   = msg.chat?.id    || msg.chat_id;
+const text     = (msg.text       || '').trim();
+const msgId    = msg.message_id;
+const firstName = msg.from?.first_name || 'Utilisateur';
+
+return [{
+  json: {
+    chat_id:    chatId,
+    text:       text,
+    message_id: msgId,
+    first_name: firstName,
+    is_cancel:  text.toLowerCase() === '/cancel'
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE 2 : "Get Active Session" — PostgreSQL (Query node, pas Code)
+--------------------------------------------------------------------
+// QUERY à coller dans le champ SQL du PostgreSQL node :
+
+SELECT
+  s.id               AS session_id,
+  s.session_uuid,
+  s.conversation_state,
+  s.current_question,
+  s.custom_answers,
+  s.file_type,
+  s.file_name,
+  s.extracted_preview,
+  s.extracted_data,
+  u.language
+FROM sessions s
+JOIN users u ON s.user_id = u.id
+WHERE s.chat_id = $1
+  AND s.conversation_state LIKE 'awaiting_%'
+ORDER BY s.created_at DESC
+LIMIT 1
+
+// QUERY PARAMETERS (Add option → Query Parameters) :
+// $1 = {{ $('Extract Message Data').first().json.chat_id }}
+
+
+--------------------------------------------------------------------
+NODE 3 : "Check Session Found" — IF node (pas Code)
+--------------------------------------------------------------------
+// Condition à configurer dans le IF node :
+// Value 1 : {{ $input.first().json.session_id }}
+// Operation : is not empty
+// Type : String
+
+
+--------------------------------------------------------------------
+NODE 4 : "Extract Session Data"
+--------------------------------------------------------------------
+// Regroupe toutes les données utiles en un seul objet
+const session  = $input.first().json;
+const msgData  = $('Extract Message Data').first().json;
+
+return [{
+  json: {
+    session_id:         session.session_id,
+    session_uuid:       session.session_uuid,
+    conversation_state: session.conversation_state,
+    current_question:   session.current_question,
+    custom_answers:     session.custom_answers || {},
+    file_type:          session.file_type,
+    file_name:          session.file_name,
+    extracted_preview:  session.extracted_preview,
+    extracted_data:     session.extracted_data,
+    language:           session.language || 'FR',
+    chat_id:            msgData.chat_id,
+    user_text:          msgData.text,
+    first_name:         msgData.first_name
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE 5 : "Validate Answer"
+--------------------------------------------------------------------
+// Valide que la réponse fait entre 3 et 500 caractères
+const data = $input.first().json;
+const text = data.user_text || '';
+const lang = data.language;
+const len  = text.length;
+
+let error_msg = null;
+
+if (len < 3) {
+  error_msg = lang === 'ENG'
+    ? '⚠️ Response too short. Please enter at least 3 characters.'
+    : '⚠️ Réponse trop courte. Veuillez entrer au moins 3 caractères.';
+}
+if (len > 500) {
+  error_msg = lang === 'ENG'
+    ? '⚠️ Response too long (max 500 characters). Please rephrase.'
+    : '⚠️ Réponse trop longue (max 500 caractères). Veuillez reformuler.';
+}
+
+return [{
+  json: {
+    ...data,
+    is_valid:  error_msg === null,
+    error_msg: error_msg
+  }
+}];
+
+// Après ce node, ajouter un IF node :
+// Condition : {{ $json.is_valid }} = true (type Boolean)
+// YES → Switch conversation_state
+// NO  → Telegram sendMessage avec {{ $json.error_msg }}
+
+
+--------------------------------------------------------------------
+NODE 6 : "Switch conversation_state" — Switch node (pas Code)
+--------------------------------------------------------------------
+// Configurer dans le Switch node :
+// Mode : Rules
+// Value : {{ $json.conversation_state }}
+//
+// Rule 1 : equals "awaiting_custom"  → OUTPUT 1
+// Rule 2 : equals "awaiting_q2"      → OUTPUT 2
+// Rule 3 : equals "awaiting_q3"      → OUTPUT 3
+// Rule 4 : equals "awaiting_q4"      → OUTPUT 4
+// Rule 5 : equals "awaiting_q5"      → OUTPUT 5
+
+
+--------------------------------------------------------------------
+NODE 7a : "Save Q1 & Prepare Next" (branche awaiting_custom)
+--------------------------------------------------------------------
+// Prépare les paramètres pour l'UPDATE PostgreSQL
+const data = $input.first().json;
+
+const newAnswer     = { q1: data.user_text };
+const newAnswersStr = JSON.stringify(newAnswer);
+
+return [{
+  json: {
+    session_id:      data.session_id,
+    chat_id:         data.chat_id,
+    language:        data.language,
+    new_answer_json: newAnswersStr,
+    new_state:       'awaiting_q2',
+    new_question:    2
+  }
+}];
+
+// Connecter ensuite à :
+// 1. PostgreSQL node "UPDATE Save Q1" (voir query ci-dessous)
+// 2. Telegram node "Send Q2"
+
+
+--------------------------------------------------------------------
+NODE 7a-SQL : "UPDATE Save Q1" — PostgreSQL node
+--------------------------------------------------------------------
+// Query :
+UPDATE sessions
+SET custom_answers    = custom_answers || $1::jsonb,
+    current_question  = $2,
+    conversation_state = $3,
+    updated_at        = NOW()
+WHERE id = $4
+
+// Query Parameters :
+// $1 = {{ $json.new_answer_json }}
+// $2 = {{ $json.new_question }}
+// $3 = {{ $json.new_state }}
+// $4 = {{ $json.session_id }}
+
+
+--------------------------------------------------------------------
+NODE 7a-MSG : "Send Q2" — Telegram sendMessage node
+--------------------------------------------------------------------
+// Chat ID : {{ $('Save Q1 & Prepare Next').first().json.chat_id }}
+// Text (Expression) :
+{{
+  $('Save Q1 & Prepare Next').first().json.language === 'ENG'
+  ? '📊 *Question 2/5*\n\nWhich columns or sections are most relevant to you?\n\n_(Example: sales, date, region, product name)_'
+  : '📊 *Question 2/5*\n\nQuelles colonnes ou sections vous intéressent particulièrement ?\n\n_(Exemple : ventes, date, région, nom produit)_'
+}}
+// Parse Mode : Markdown
+
+
+--------------------------------------------------------------------
+NODE 7b : "Save Q2 & Prepare Next" (branche awaiting_q2)
+--------------------------------------------------------------------
+const data = $input.first().json;
+
+const newAnswer     = { q2: data.user_text };
+const newAnswersStr = JSON.stringify(newAnswer);
+
+return [{
+  json: {
+    session_id:      data.session_id,
+    chat_id:         data.chat_id,
+    language:        data.language,
+    new_answer_json: newAnswersStr,
+    new_state:       'awaiting_q3',
+    new_question:    3
+  }
+}];
+
+// UPDATE SQL identique à 7a-SQL (adapter $1/$2/$3/$4 depuis ce node)
+// Message Q3 :
+// FR : '📊 *Question 3/5*\n\nY a-t-il une période ou un filtre spécifique à appliquer ?\n\n_(Exemple : janvier 2024, région Nord, produit A)_'
+// ENG: '📊 *Question 3/5*\n\nIs there a specific time period or filter to apply?\n\n_(Example: January 2024, North region, product A)_'
+
+
+--------------------------------------------------------------------
+NODE 7c : "Save Q3 & Prepare Next" (branche awaiting_q3)
+--------------------------------------------------------------------
+const data = $input.first().json;
+
+const newAnswer     = { q3: data.user_text };
+const newAnswersStr = JSON.stringify(newAnswer);
+
+return [{
+  json: {
+    session_id:      data.session_id,
+    chat_id:         data.chat_id,
+    language:        data.language,
+    new_answer_json: newAnswersStr,
+    new_state:       'awaiting_q4',
+    new_question:    4
+  }
+}];
+
+// Message Q4 :
+// FR : '📊 *Question 4/5*\n\nQuel type de livrable souhaitez-vous ?\n\n_(Résumé / Insights / Recommandations / Les trois)_'
+// ENG: '📊 *Question 4/5*\n\nWhat type of output do you need?\n\n_(Summary / Insights / Recommendations / All three)_'
+
+
+--------------------------------------------------------------------
+NODE 7d : "Save Q4 & Prepare Next" (branche awaiting_q4)
+--------------------------------------------------------------------
+const data = $input.first().json;
+
+const newAnswer     = { q4: data.user_text };
+const newAnswersStr = JSON.stringify(newAnswer);
+
+return [{
+  json: {
+    session_id:      data.session_id,
+    chat_id:         data.chat_id,
+    language:        data.language,
+    new_answer_json: newAnswersStr,
+    new_state:       'awaiting_q5',
+    new_question:    5
+  }
+}];
+
+// Message Q5 :
+// FR : '📊 *Question 5/5 — Dernière question !*\n\nÀ qui est destiné ce rapport ?\n\n_(Exemple : direction générale, équipe marketing, client externe)_'
+// ENG: '📊 *Question 5/5 — Last question!*\n\nWho is the target audience for this report?\n\n_(Example: management, marketing team, external client)_'
+
+
+--------------------------------------------------------------------
+NODE CANCEL : "Handle Cancel" — Code node (branche /cancel)
+--------------------------------------------------------------------
+// Ce node prépare les params pour l'UPDATE et le message annulation
+const msgData = $('Extract Message Data').first().json;
+
+return [{
+  json: {
+    chat_id:  msgData.chat_id,
+    language: 'FR'  // sera écrasé si session trouvée
+  }
+}];
+
+// UPDATE SQL pour annulation :
+// UPDATE sessions
+// SET conversation_state = 'idle', updated_at = NOW()
+// WHERE chat_id = $1 AND conversation_state LIKE 'awaiting_%'
+//
+// $1 = {{ $json.chat_id }}
+
+// Message :
+// FR : '❌ Analyse annulée.\n\nVous pouvez envoyer un nouveau fichier à tout moment.'
+// ENG: '❌ Analysis cancelled.\n\nYou can send a new file at any time.'

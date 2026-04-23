@@ -1,0 +1,110 @@
+====================================================================
+SPRINT 2.5 — INTÉGRATION WF-02 → WF-04
+Modifications à apporter dans WF-02 (File Receiver)
+8 avril 2026
+====================================================================
+
+Objectif : quand l'utilisateur clique "Personnalisée" dans WF-02,
+au lieu de router vers WF-03 (analyse auto), on :
+  1. UPDATE session → conversation_state='awaiting_custom'
+  2. Envoie Q1 directement depuis WF-02
+  3. WF-04 prend le relais dès la réponse texte suivante
+
+
+--------------------------------------------------------------------
+ÉTAPE A : Repérer dans WF-02 le node qui gère le callback "custom_*"
+--------------------------------------------------------------------
+Dans WF-02, il existe déjà un Switch ou IF qui route entre :
+  - callback "auto_*"     → WF-03 (analyse automatique) ← NE PAS MODIFIER
+  - callback "custom_*"   → C'EST ICI QU'ON INTERVIENT
+
+Remplacer la branche "custom_*" par les nodes suivants :
+
+
+--------------------------------------------------------------------
+NODE A1 : "Set Custom Mode" — Code node
+--------------------------------------------------------------------
+// Extrait session_id et chat_id depuis le callback "custom_*"
+// ⚠️ Pattern §8 : toujours .replace(/^=/, '') sur callback data
+
+const raw        = $input.first().json.callback_query.data.replace(/^=/, '');
+const chatId     = $input.first().json.callback_query.message.chat.id;
+const parts      = raw.split('_');  // "custom_42" → ["custom", "42"]
+const sessionId  = parseInt(parts[parts.length - 1], 10);
+const lang       = $input.first().json.callback_query.from?.language_code || 'fr';
+const language   = lang.startsWith('en') ? 'ENG' : 'FR';
+
+return [{
+  json: {
+    session_id:  sessionId,
+    chat_id:     chatId,
+    language:    language
+  }
+}];
+
+
+--------------------------------------------------------------------
+NODE A2-SQL : "UPDATE Session Custom Mode" — PostgreSQL node
+--------------------------------------------------------------------
+// Query :
+UPDATE sessions
+SET conversation_state = 'awaiting_custom',
+    current_question   = 1,
+    analysis_type      = 'custom',
+    updated_at         = NOW()
+WHERE id = $1
+RETURNING id, conversation_state
+
+// Query Parameters :
+// $1 = {{ $json.session_id }}
+
+
+--------------------------------------------------------------------
+NODE A3 : "Send Q1" — Telegram sendMessage node
+--------------------------------------------------------------------
+// Chat ID : {{ $('Set Custom Mode').first().json.chat_id }}
+// Text (Expression) :
+{{
+  $('Set Custom Mode').first().json.language === 'ENG'
+  ? '🎯 *Personalized Analysis — 5 questions*\n\nI will ask you 5 quick questions to tailor the analysis to your needs.\n\n*Question 1/5*\nWhat is the main goal of this analysis?\n\n_(Example: identify sales trends, analyze team performance, understand customer behavior)_\n\n_Type /cancel at any time to abort._'
+  : '🎯 *Analyse Personnalisée — 5 questions*\n\nJe vais vous poser 5 questions rapides pour adapter l\'analyse à vos besoins.\n\n*Question 1/5*\nQuel est l\'objectif principal de cette analyse ?\n\n_(Exemple : identifier les tendances de vente, analyser la performance d\'équipe, comprendre le comportement client)_\n\n_Tapez /cancel à tout moment pour annuler._'
+}}
+// Parse Mode : Markdown
+
+
+====================================================================
+RÉSUMÉ DES MODIFICATIONS DANS WF-02
+====================================================================
+
+AVANT (branche custom_*) :
+  [Callback custom_*] → [UPDATE analysis_type='custom'] → [WF-03 Execute]
+
+APRÈS :
+  [Callback custom_*]
+       ↓
+  [Set Custom Mode]         ← extrait session_id + chat_id
+       ↓
+  [UPDATE Session Custom]   ← conversation_state='awaiting_custom', current_question=1
+       ↓
+  [Send Q1]                 ← question 1 envoyée directement
+
+WF-04 (analyse personnalisée) prend le relais automatiquement
+dès que l'utilisateur envoie sa réponse texte.
+
+
+====================================================================
+NOTE SUR LE CONFLIT DE TRIGGERS TELEGRAM
+====================================================================
+
+WF-01 écoute les commandes /start.
+WF-02 écoute les fichiers entrants.
+WF-04 écoute les messages TEXTE — risque de conflit avec WF-01.
+
+RÈGLE : WF-04 ne traite un message texte QUE si une session
+avec conversation_state LIKE 'awaiting_%' existe pour ce chat_id.
+→ Le node "Get Active Session" (SELECT ... WHERE state LIKE 'awaiting_%')
+  retourne 0 lignes si pas de session active → IF node stoppe le flow.
+→ Si /start est tapé pendant une session custom → WF-01 répond normalement
+  ET WF-04 stoppe (car /start ne correspond à aucun état awaiting_*).
+
+Pas de conflit à gérer côté code : le SELECT filtre naturellement.

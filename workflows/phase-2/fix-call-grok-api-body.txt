@@ -1,0 +1,29 @@
+===== FIX : Node "Call Grok API" — Body Parameters =====
+
+PROBLÈME : Le body est vide à l'import JSON. Grok reçoit une requête sans body → erreur → fallback Ollama.
+
+ACTION : Dans n8n, ouvrir WF-03 → node "Call Grok API"
+
+1. Dans "Body", sélectionner : JSON/RAW
+2. Coller ce JSON dans le champ "Body" :
+
+{
+  "model": "grok-3",
+  "messages": [
+    {
+      "role": "user",
+      "content": "={{ $json.prompt }}"
+    }
+  ],
+  "temperature": 0.3,
+  "max_tokens": 4000
+}
+
+IMPORTANT : Le champ "content" doit être en mode Expression (icône éclair) avec la valeur :
+={{ $json.prompt }}
+
+3. Vérifier que le header Authorization est :
+   Bearer {{ $env.GROK_API_KEY }}
+   (en mode Expression)
+
+4. Sauvegarder.

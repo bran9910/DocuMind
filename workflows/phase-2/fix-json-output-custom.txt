@@ -1,0 +1,98 @@
+====================================================================
+FIX — RAPPORT JSON VIDE (kimi répond en Markdown au lieu de JSON)
+9 avril 2026
+====================================================================
+Deux nodes à modifier dans WF-04C :
+  1. "Basic LLM Chain Custom" → message système
+  2. "Build Custom Prompt"    → code complet
+
+
+====================================================================
+NODE 1 — "Basic LLM Chain Custom"
+Onglet : Messages → System Message
+Remplacer le contenu par :
+====================================================================
+
+You are a data analysis API. Your ENTIRE response must be a single valid JSON object. Start with { and end with }. Absolutely no markdown, no explanations, no text before or after the JSON.
+
+
+====================================================================
+NODE 2 — "Build Custom Prompt"
+Remplacer TOUT le code JavaScript par :
+====================================================================
+
+const session = $input.first().json;
+const answers = session.custom_answers || {};
+const lang = session.language || 'FR';
+const fileType = (session.file_type || 'unknown').toUpperCase();
+const fileName = session.file_name || 'fichier';
+const preview = session.extracted_preview || '';
+
+let fileData = '';
+try {
+  const rawData = session.extracted_data;
+  if (rawData && typeof rawData === 'object') {
+    fileData = JSON.stringify(rawData).substring(0, 8000);
+  } else if (typeof rawData === 'string') {
+    fileData = rawData.substring(0, 8000);
+  }
+} catch(e) {
+  fileData = preview.substring(0, 4000);
+}
+if (!fileData) fileData = preview.substring(0, 4000);
+
+const q1 = answers.q1 || (lang === 'ENG' ? 'Not specified' : 'Non précisé');
+const q2 = answers.q2 || (lang === 'ENG' ? 'All available' : 'Toutes disponibles');
+const q3 = answers.q3 || (lang === 'ENG' ? 'No specific filter' : 'Aucun filtre');
+const q4 = answers.q4 || (lang === 'ENG' ? 'Complete analysis' : 'Analyse complète');
+const q5 = answers.q5 || (lang === 'ENG' ? 'General' : 'Général');
+
+let prompt;
+if (lang === 'ENG') {
+  prompt = 'Analyze this ' + fileType + ' file: ' + fileName + '\n\n'
+    + 'USER REQUIREMENTS:\n'
+    + '1. Main goal: ' + q1 + '\n'
+    + '2. Focus columns/sections: ' + q2 + '\n'
+    + '3. Time period or filter: ' + q3 + '\n'
+    + '4. Output type: ' + q4 + '\n'
+    + '5. Target audience: ' + q5 + '\n\n'
+    + 'FILE DATA:\n' + fileData + '\n\n'
+    + 'RESPOND ONLY WITH VALID JSON. Start with { and end with }. No markdown, no text outside JSON.\n'
+    + 'Required format:\n'
+    + '{"executive_summary":"string","focused_analysis":{"key_findings":["..."],"patterns_detected":["..."],"anomalies":["..."]},"insights":["..."],"recommendations":["..."],"audience_adaptation":"string","data_quality_score":"1-10","limitations":"string"}';
+} else {
+  prompt = 'Analyse ce fichier ' + fileType + ' : ' + fileName + '\n\n'
+    + 'EXIGENCES :\n'
+    + '1. Objectif : ' + q1 + '\n'
+    + '2. Colonnes ciblées : ' + q2 + '\n'
+    + '3. Période/filtre : ' + q3 + '\n'
+    + '4. Livrable : ' + q4 + '\n'
+    + '5. Audience : ' + q5 + '\n\n'
+    + 'DONNÉES :\n' + fileData + '\n\n'
+    + 'RÉPONDS UNIQUEMENT EN JSON VALIDE. Commence par { et termine par }. Aucun markdown, aucun texte hors du JSON.\n'
+    + 'Format requis :\n'
+    + '{"resume_executif":"string","analyse_ciblee":{"points_cles":["..."],"tendances_detectees":["..."],"anomalies":["..."]},"insights":["..."],"recommandations":["..."],"adaptation_audience":"string","score_qualite_donnees":"1-10","limites":"string"}';
+}
+
+return [{ json: {
+  user_prompt:    prompt,
+  session_id:     session.session_id,
+  chat_id:        $('Save Q5 Set Processing').first().json.chat_id,
+  language:       lang,
+  file_name:      fileName,
+  custom_answers: answers,
+  start_time:     Date.now()
+} }];
+
+
+====================================================================
+RÉSUMÉ DES MODIFICATIONS
+====================================================================
+- "Basic LLM Chain Custom" : message système remplacé (1 phrase courte en anglais)
+- "Build Custom Prompt" : format JSON ajouté à la FIN du prompt utilisateur
+
+Pourquoi à la fin ? Les LLMs donnent plus de poids aux instructions
+en bas du prompt qu'en haut. kimi ignorait l'instruction système
+car il était "lancé" dans son analyse en markdown.
+
+Après modification → re-tester avec le même fichier CSV.

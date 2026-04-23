@@ -1,0 +1,738 @@
+{
+  "name": "WF-04C - Custom Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "c4c01001-0000-0000-0000-000000000001",
+      "name": "Telegram Trigger Custom",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [-2400, 500],
+      "webhookId": "wf04c-telegram-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json.message || $input.first().json;\nconst chatId = msg.chat?.id || msg.chat_id;\nconst text = (msg.text || '').trim();\nconst msgId = msg.message_id;\nconst firstName = msg.from?.first_name || 'Utilisateur';\nreturn [{ json: { chat_id: chatId, text, message_id: msgId, first_name: firstName, is_cancel: text.toLowerCase() === '/cancel' } }];"
+      },
+      "id": "c4c01002-0000-0000-0000-000000000002",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2160, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "cond-cancel",
+              "leftValue": "={{ $json.is_cancel }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c4c01003-0000-0000-0000-000000000003",
+      "name": "IF Cancel",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-1920, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET conversation_state = 'idle',\n    updated_at = NOW()\nWHERE chat_id = $1\n  AND conversation_state LIKE 'awaiting_%'",
+        "options": {
+          "queryReplacement": "={{ $('Extract Message Data').first().json.chat_id }}"
+        }
+      },
+      "id": "c4c01004-0000-0000-0000-000000000004",
+      "name": "UPDATE Cancel Idle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-1680, 720],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Message Data').first().json.chat_id }}",
+        "text": "❌ Analyse annulée. / Analysis cancelled.\n\nVous pouvez envoyer un nouveau fichier à tout moment.\nYou can send a new file at any time.",
+        "additionalFields": {}
+      },
+      "id": "c4c01005-0000-0000-0000-000000000005",
+      "name": "Send Cancel Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-1440, 720],
+      "webhookId": "wf04c-send-cancel",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  s.id               AS session_id,\n  s.session_uuid,\n  s.conversation_state,\n  s.current_question,\n  s.custom_answers,\n  s.file_type,\n  s.file_name,\n  s.extracted_preview,\n  s.extracted_data,\n  u.language\nFROM sessions s\nJOIN users u ON s.user_id = u.id\nWHERE s.chat_id = $1\n  AND s.conversation_state LIKE 'awaiting_%'\nORDER BY s.created_at DESC\nLIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $('Extract Message Data').first().json.chat_id }}"
+        }
+      },
+      "id": "c4c01006-0000-0000-0000-000000000006",
+      "name": "Get Active Session",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-1680, 500],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const session = $input.first().json;\nconst msgData = $('Extract Message Data').first().json;\nreturn [{ json: {\n  session_id:         session.session_id,\n  session_uuid:       session.session_uuid,\n  conversation_state: session.conversation_state,\n  current_question:   session.current_question,\n  custom_answers:     session.custom_answers || {},\n  file_type:          session.file_type,\n  file_name:          session.file_name,\n  extracted_preview:  session.extracted_preview,\n  extracted_data:     session.extracted_data,\n  language:           session.language || 'FR',\n  chat_id:            msgData.chat_id,\n  user_text:          msgData.text,\n  first_name:         msgData.first_name\n} }];"
+      },
+      "id": "c4c01007-0000-0000-0000-000000000007",
+      "name": "Extract Session Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1440, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst text = data.user_text || '';\nconst lang = data.language;\nconst len = text.length;\nlet error_msg = null;\nif (len < 3) error_msg = lang === 'ENG' ? '⚠️ Response too short. Please enter at least 3 characters.' : '⚠️ Réponse trop courte. Veuillez entrer au moins 3 caractères.';\nif (len > 500) error_msg = lang === 'ENG' ? '⚠️ Response too long (max 500 characters). Please rephrase.' : '⚠️ Réponse trop longue (max 500 caractères). Veuillez reformuler.';\nreturn [{ json: { ...data, is_valid: error_msg === null, error_msg } }];"
+      },
+      "id": "c4c01008-0000-0000-0000-000000000008",
+      "name": "Validate Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1200, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": true,
+              "operator": {"type": "boolean", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c4c01009-0000-0000-0000-000000000009",
+      "name": "IF Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-960, 500]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.error_msg }}",
+        "additionalFields": {}
+      },
+      "id": "c4c01010-0000-0000-0000-000000000010",
+      "name": "Send Validation Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [-720, 720],
+      "webhookId": "wf04c-send-error",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {"caseSensitive": true},
+                "conditions": [{"leftValue": "={{ $json.conversation_state }}", "rightValue": "awaiting_custom", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {"caseSensitive": true},
+                "conditions": [{"leftValue": "={{ $json.conversation_state }}", "rightValue": "awaiting_q2", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {"caseSensitive": true},
+                "conditions": [{"leftValue": "={{ $json.conversation_state }}", "rightValue": "awaiting_q3", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {"caseSensitive": true},
+                "conditions": [{"leftValue": "={{ $json.conversation_state }}", "rightValue": "awaiting_q4", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {"caseSensitive": true},
+                "conditions": [{"leftValue": "={{ $json.conversation_state }}", "rightValue": "awaiting_q5", "operator": {"type": "string", "operation": "equals"}}],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c4c01011-0000-0000-0000-000000000011",
+      "name": "Switch State",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [-720, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: { session_id: data.session_id, chat_id: data.chat_id, language: data.language, new_answer_json: JSON.stringify({ q1: data.user_text }), new_state: 'awaiting_q2', new_question: 2 } }];"
+      },
+      "id": "c4c01012-0000-0000-0000-000000000012",
+      "name": "Save Q1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET custom_answers     = custom_answers || $1::jsonb,\n    current_question   = $2,\n    conversation_state = $3,\n    updated_at         = NOW()\nWHERE id = $4",
+        "options": {
+          "queryReplacement": "=={{ $json.new_answer_json }}, {{ $json.new_question }}, {{ $json.new_state }}, {{ $json.session_id }}"
+        }
+      },
+      "id": "c4c01013-0000-0000-0000-000000000013",
+      "name": "UPDATE Q1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 100],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Save Q1').first().json.chat_id }}",
+        "text": "={{ $('Save Q1').first().json.language === 'ENG' ? '📊 *Question 2/5*\\n\\nWhich columns or sections are most relevant to you?\\n\\n_(Example: sales, date, region, product name)_' : '📊 *Question 2/5*\\n\\nQuelles colonnes ou sections vous intéressent particulièrement ?\\n\\n_(Exemple : ventes, date, région, nom produit)_' }}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01014-0000-0000-0000-000000000014",
+      "name": "Send Q2",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [0, 100],
+      "webhookId": "wf04c-send-q2",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: { session_id: data.session_id, chat_id: data.chat_id, language: data.language, new_answer_json: JSON.stringify({ q2: data.user_text }), new_state: 'awaiting_q3', new_question: 3 } }];"
+      },
+      "id": "c4c01015-0000-0000-0000-000000000015",
+      "name": "Save Q2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 280]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET custom_answers     = custom_answers || $1::jsonb,\n    current_question   = $2,\n    conversation_state = $3,\n    updated_at         = NOW()\nWHERE id = $4",
+        "options": {
+          "queryReplacement": "=={{ $json.new_answer_json }}, {{ $json.new_question }}, {{ $json.new_state }}, {{ $json.session_id }}"
+        }
+      },
+      "id": "c4c01016-0000-0000-0000-000000000016",
+      "name": "UPDATE Q2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 280],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Save Q2').first().json.chat_id }}",
+        "text": "={{ $('Save Q2').first().json.language === 'ENG' ? '📊 *Question 3/5*\\n\\nIs there a specific time period or filter to apply?\\n\\n_(Example: January 2024, North region, product A — or type \"None\" to skip)_' : '📊 *Question 3/5*\\n\\nY a-t-il une période ou un filtre spécifique à appliquer ?\\n\\n_(Exemple : janvier 2024, région Nord, produit A — ou tapez \"Aucun\" pour passer)_' }}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01017-0000-0000-0000-000000000017",
+      "name": "Send Q3",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [0, 280],
+      "webhookId": "wf04c-send-q3",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: { session_id: data.session_id, chat_id: data.chat_id, language: data.language, new_answer_json: JSON.stringify({ q3: data.user_text }), new_state: 'awaiting_q4', new_question: 4 } }];"
+      },
+      "id": "c4c01018-0000-0000-0000-000000000018",
+      "name": "Save Q3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 460]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET custom_answers     = custom_answers || $1::jsonb,\n    current_question   = $2,\n    conversation_state = $3,\n    updated_at         = NOW()\nWHERE id = $4",
+        "options": {
+          "queryReplacement": "=={{ $json.new_answer_json }}, {{ $json.new_question }}, {{ $json.new_state }}, {{ $json.session_id }}"
+        }
+      },
+      "id": "c4c01019-0000-0000-0000-000000000019",
+      "name": "UPDATE Q3",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 460],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Save Q3').first().json.chat_id }}",
+        "text": "={{ $('Save Q3').first().json.language === 'ENG' ? '📊 *Question 4/5*\\n\\nWhat type of output do you need?\\n\\n_(Summary / Insights / Recommendations / All three)_' : '📊 *Question 4/5*\\n\\nQuel type de livrable souhaitez-vous ?\\n\\n_(Résumé / Insights / Recommandations / Les trois)_' }}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01020-0000-0000-0000-000000000020",
+      "name": "Send Q4",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [0, 460],
+      "webhookId": "wf04c-send-q4",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: { session_id: data.session_id, chat_id: data.chat_id, language: data.language, new_answer_json: JSON.stringify({ q4: data.user_text }), new_state: 'awaiting_q5', new_question: 5 } }];"
+      },
+      "id": "c4c01021-0000-0000-0000-000000000021",
+      "name": "Save Q4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 640]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET custom_answers     = custom_answers || $1::jsonb,\n    current_question   = $2,\n    conversation_state = $3,\n    updated_at         = NOW()\nWHERE id = $4",
+        "options": {
+          "queryReplacement": "=={{ $json.new_answer_json }}, {{ $json.new_question }}, {{ $json.new_state }}, {{ $json.session_id }}"
+        }
+      },
+      "id": "c4c01022-0000-0000-0000-000000000022",
+      "name": "UPDATE Q4",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 640],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Save Q4').first().json.chat_id }}",
+        "text": "={{ $('Save Q4').first().json.language === 'ENG' ? '📊 *Question 5/5 — Last question!*\\n\\nWho is the target audience for this report?\\n\\n_(Example: management, marketing team, external client)_' : '📊 *Question 5/5 — Dernière question !*\\n\\nÀ qui est destiné ce rapport ?\\n\\n_(Exemple : direction générale, équipe marketing, client externe)_' }}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01023-0000-0000-0000-000000000023",
+      "name": "Send Q5",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [0, 640],
+      "webhookId": "wf04c-send-q5",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: {\n  session_id:       data.session_id,\n  chat_id:          data.chat_id,\n  language:         data.language,\n  new_answer_json:  JSON.stringify({ q5: data.user_text }),\n  new_state:        'processing_custom',\n  new_question:     5,\n  custom_answers:   data.custom_answers,\n  file_type:        data.file_type,\n  file_name:        data.file_name,\n  extracted_data:   data.extracted_data,\n  extracted_preview: data.extracted_preview\n} }];"
+      },
+      "id": "c4c01024-0000-0000-0000-000000000024",
+      "name": "Save Q5 Set Processing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 820]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET custom_answers     = custom_answers || $1::jsonb,\n    current_question   = $2,\n    conversation_state = $3,\n    analysis_type      = 'custom',\n    updated_at         = NOW()\nWHERE id = $4",
+        "options": {
+          "queryReplacement": "=={{ $json.new_answer_json }}, {{ $json.new_question }}, {{ $json.new_state }}, {{ $json.session_id }}"
+        }
+      },
+      "id": "c4c01025-0000-0000-0000-000000000025",
+      "name": "UPDATE Set Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 820],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Save Q5 Set Processing').first().json.chat_id }}",
+        "text": "={{ $('Save Q5 Set Processing').first().json.language === 'ENG' ? '⚙️ *Personalized analysis in progress...*\\n\\nYour 5 answers have been recorded. The AI is generating your customized report.\\n\\n_This may take 30 to 120 seconds._' : '⚙️ *Analyse personnalisée en cours...*\\n\\nVos 5 réponses ont été enregistrées. L\\'IA génère votre rapport personnalisé.\\n\\n_Cela peut prendre 30 à 120 secondes._' }}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01026-0000-0000-0000-000000000026",
+      "name": "Send Processing Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [0, 820],
+      "webhookId": "wf04c-send-processing",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  s.id               AS session_id,\n  s.custom_answers,\n  s.file_type,\n  s.file_name,\n  s.extracted_data,\n  s.extracted_preview,\n  s.file_size_bytes,\n  u.language,\n  u.first_name\nFROM sessions s\nJOIN users u ON s.user_id = u.id\nWHERE s.id = $1",
+        "options": {
+          "queryReplacement": "={{ $('Save Q5 Set Processing').first().json.session_id }}"
+        }
+      },
+      "id": "c4c01027-0000-0000-0000-000000000027",
+      "name": "Get Full Session Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [240, 820],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const session = $input.first().json;\nconst answers = session.custom_answers || {};\nconst lang = session.language || 'FR';\nconst fileType = (session.file_type || 'unknown').toUpperCase();\nconst fileName = session.file_name || 'fichier';\nconst preview = session.extracted_preview || '';\n\nlet fileData = '';\ntry {\n  const rawData = session.extracted_data;\n  if (rawData && typeof rawData === 'object') {\n    fileData = JSON.stringify(rawData).substring(0, 8000);\n  } else if (typeof rawData === 'string') {\n    fileData = rawData.substring(0, 8000);\n  }\n} catch(e) {\n  fileData = preview.substring(0, 4000);\n}\nif (!fileData) fileData = preview.substring(0, 4000);\n\nconst q1 = answers.q1 || (lang === 'ENG' ? 'Not specified' : 'Non précisé');\nconst q2 = answers.q2 || (lang === 'ENG' ? 'All available' : 'Toutes disponibles');\nconst q3 = answers.q3 || (lang === 'ENG' ? 'No specific filter' : 'Aucun filtre');\nconst q4 = answers.q4 || (lang === 'ENG' ? 'Complete analysis' : 'Analyse complète');\nconst q5 = answers.q5 || (lang === 'ENG' ? 'General' : 'Général');\n\nlet prompt;\nif (lang === 'ENG') {\n  prompt = 'Analyze this ' + fileType + ' file: ' + fileName + '\\n\\n'\n    + 'USER REQUIREMENTS:\\n'\n    + '1. Main goal: ' + q1 + '\\n'\n    + '2. Focus columns/sections: ' + q2 + '\\n'\n    + '3. Time period or filter: ' + q3 + '\\n'\n    + '4. Output type: ' + q4 + '\\n'\n    + '5. Target audience: ' + q5 + '\\n\\n'\n    + 'FILE DATA:\\n' + fileData;\n} else {\n  prompt = 'Analyse ce fichier ' + fileType + ' : ' + fileName + '\\n\\n'\n    + 'EXIGENCES :\\n'\n    + '1. Objectif : ' + q1 + '\\n'\n    + '2. Colonnes ciblées : ' + q2 + '\\n'\n    + '3. Période/filtre : ' + q3 + '\\n'\n    + '4. Livrable : ' + q4 + '\\n'\n    + '5. Audience : ' + q5 + '\\n\\n'\n    + 'DONNÉES :\\n' + fileData;\n}\n\nreturn [{ json: {\n  user_prompt:    prompt,\n  session_id:     session.session_id,\n  chat_id:        $('Save Q5 Set Processing').first().json.chat_id,\n  language:       lang,\n  file_name:      fileName,\n  custom_answers: answers,\n  start_time:     Date.now()\n} }];"
+      },
+      "id": "c4c01028-0000-0000-0000-000000000028",
+      "name": "Build Custom Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 820]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=={{ $json.user_prompt }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Tu es un expert data analyst / You are an expert data analyst.\nTu réponds UNIQUEMENT en JSON valide, sans markdown, sans explication, sans texte avant ou après le JSON.\nFormat attendu (FR) : {\"resume_executif\":\"...\",\"analyse_ciblee\":{\"points_cles\":[],\"tendances_detectees\":[],\"anomalies\":[]},\"insights\":[],\"recommandations\":[],\"adaptation_audience\":\"...\",\"score_qualite_donnees\":\"1-10\",\"limites\":\"...\"}\nFormat attendu (ENG) : {\"executive_summary\":\"...\",\"focused_analysis\":{\"key_findings\":[],\"patterns_detected\":[],\"anomalies\":[]},\"insights\":[],\"recommendations\":[],\"audience_adaptation\":\"...\",\"data_quality_score\":\"1-10\",\"limitations\":\"...\"}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "c4c01029-0000-0000-0000-000000000029",
+      "name": "Basic LLM Chain Custom",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [720, 820]
+    },
+    {
+      "parameters": {
+        "model": "kimi-k2.5:cloud",
+        "options": {}
+      },
+      "id": "c4c01030-0000-0000-0000-000000000030",
+      "name": "Ollama Model Custom",
+      "type": "@n8n/n8n-nodes-langchain.lmOllama",
+      "typeVersion": 1,
+      "position": [720, 1020],
+      "credentials": {
+        "ollamaApi": {
+          "id": "E6ptcD58KU9Tj4yG",
+          "name": "ollama_vps"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const chainOutput = $input.first().json;\nconst buildInput = $('Build Custom Prompt').first().json;\n\nconst rawOutput = (chainOutput.response && chainOutput.response.text)\n               || chainOutput.text\n               || chainOutput.output\n               || (typeof chainOutput.response === 'string' ? chainOutput.response : '')\n               || '';\n\nconsole.log('=== WF-04C Parse Response ===');\nconsole.log('keys:', JSON.stringify(Object.keys(chainOutput)));\nconsole.log('rawOutput preview:', rawOutput.substring(0, 200));\n\nlet parsed = null;\ntry {\n  let clean = rawOutput.trim();\n  if (clean.startsWith('```')) clean = clean.replace(/^```json?\\n?/, '').replace(/\\n?```$/, '');\n  const jStart = clean.indexOf('{');\n  const jEnd = clean.lastIndexOf('}');\n  if (jStart !== -1 && jEnd !== -1) clean = clean.substring(jStart, jEnd + 1);\n  parsed = JSON.parse(clean);\n} catch(e) {\n  console.log('Parse error:', e.message);\n  parsed = {\n    resume_executif:      rawOutput.substring(0, 500) || 'Analyse générée',\n    executive_summary:    rawOutput.substring(0, 500) || 'Analysis generated',\n    analyse_ciblee:       { points_cles: [], tendances_detectees: [], anomalies: [] },\n    focused_analysis:     { key_findings: [], patterns_detected: [], anomalies: [] },\n    insights:             [],\n    recommandations:      [],\n    recommendations:      [],\n    adaptation_audience:  '',\n    audience_adaptation:  '',\n    score_qualite_donnees: '?',\n    data_quality_score:   '?',\n    limites:              'Erreur parsing JSON',\n    limitations:          'JSON parsing error',\n    parse_error:          true\n  };\n}\n\nreturn [{ json: {\n  parsed_response:  parsed,\n  raw_output:       rawOutput,\n  session_id:       buildInput.session_id,\n  chat_id:          buildInput.chat_id,\n  language:         buildInput.language,\n  file_name:        buildInput.file_name,\n  custom_answers:   buildInput.custom_answers,\n  start_time:       buildInput.start_time\n} }];"
+      },
+      "id": "c4c01031-0000-0000-0000-000000000031",
+      "name": "Parse Custom Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 820]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst r = data.parsed_response;\nconst lang = data.language;\nconst answers = data.custom_answers || {};\nconst responseMs = Date.now() - (data.start_time || Date.now());\n\nlet report = '';\n\nif (lang === 'ENG') {\n  const summary   = r.executive_summary || 'N/A';\n  const findings  = (r.focused_analysis && r.focused_analysis.key_findings ? r.focused_analysis.key_findings : (r.insights || [])).slice(0, 4);\n  const patterns  = (r.focused_analysis && r.focused_analysis.patterns_detected ? r.focused_analysis.patterns_detected : []).slice(0, 3);\n  const insights  = (r.insights || []).slice(0, 3);\n  const recs      = (r.recommendations || []).slice(0, 3);\n  const quality   = r.data_quality_score || '?';\n  const audience  = r.audience_adaptation || '';\n  const limits    = r.limitations || 'None';\n\n  report = '📊 *PERSONALIZED ANALYSIS — ' + data.file_name + '*\\n'\n    + '_Target: ' + (answers.q5 || 'General') + '_\\n\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '📋 *EXECUTIVE SUMMARY*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + summary + '\\n\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '🔍 *KEY FINDINGS*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + (findings.length ? findings.map(function(f,i){return (i+1)+'. '+f;}).join('\\n') : 'N/A') + '\\n'\n    + (patterns.length ? '\\n📈 *PATTERNS*\\n' + patterns.map(function(p){return '• '+p;}).join('\\n') + '\\n' : '')\n    + '\\n━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '💡 *INSIGHTS*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + (insights.length ? insights.map(function(ins,i){return (i+1)+'. '+ins;}).join('\\n') : 'N/A') + '\\n\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '✅ *RECOMMENDATIONS*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + (recs.length ? recs.map(function(rec,i){return (i+1)+'. '+rec;}).join('\\n') : 'N/A') + '\\n'\n    + (audience ? '\\n🎯 *AUDIENCE ADAPTATION*\\n' + audience + '\\n' : '')\n    + '\\n━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '📊 Quality: ' + quality + '/10 | Goal: ' + (answers.q1 || 'N/A') + '\\n'\n    + (limits !== 'None' ? '⚠️ Limits: ' + limits + '\\n' : '')\n    + '_' + responseMs + 'ms · Personalized analysis · Intelligence Bot_';\n\n} else {\n  const summary   = r.resume_executif || r.executive_summary || 'N/A';\n  const findings  = (r.analyse_ciblee && r.analyse_ciblee.points_cles ? r.analyse_ciblee.points_cles : (r.insights || [])).slice(0, 4);\n  const tendances = (r.analyse_ciblee && r.analyse_ciblee.tendances_detectees ? r.analyse_ciblee.tendances_detectees : []).slice(0, 3);\n  const insights  = (r.insights || []).slice(0, 3);\n  const recs      = (r.recommandations || r.recommendations || []).slice(0, 3);\n  const quality   = r.score_qualite_donnees || r.data_quality_score || '?';\n  const audience  = r.adaptation_audience || r.audience_adaptation || '';\n  const limits    = r.limites || r.limitations || 'Aucune';\n\n  report = '📊 *ANALYSE PERSONNALISÉE — ' + data.file_name + '*\\n'\n    + '_Audience : ' + (answers.q5 || 'Général') + '_\\n\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '📋 *RÉSUMÉ EXÉCUTIF*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + summary + '\\n\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '🔍 *POINTS CLÉS*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + (findings.length ? findings.map(function(f,i){return (i+1)+'. '+f;}).join('\\n') : 'N/A') + '\\n'\n    + (tendances.length ? '\\n📈 *TENDANCES*\\n' + tendances.map(function(t){return '• '+t;}).join('\\n') + '\\n' : '')\n    + '\\n━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '💡 *INSIGHTS*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + (insights.length ? insights.map(function(ins,i){return (i+1)+'. '+ins;}).join('\\n') : 'N/A') + '\\n\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '✅ *RECOMMANDATIONS*\\n'\n    + '━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + (recs.length ? recs.map(function(rec,i){return (i+1)+'. '+rec;}).join('\\n') : 'N/A') + '\\n'\n    + (audience ? '\\n🎯 *ADAPTATION AUDIENCE*\\n' + audience + '\\n' : '')\n    + '\\n━━━━━━━━━━━━━━━━━━━━━━━\\n'\n    + '📊 Qualité : ' + quality + '/10 | Objectif : ' + (answers.q1 || 'N/A') + '\\n'\n    + (limits !== 'Aucune' ? '⚠️ Limites : ' + limits + '\\n' : '')\n    + '_' + responseMs + 'ms · Analyse personnalisée · Intelligence Bot_';\n}\n\nif (report.length > 4096) report = report.substring(0, 4090) + '..._';\n\nconst rawResponseB64 = Buffer.from(JSON.stringify(r)).toString('base64');\n\nreturn [{ json: {\n  report_text:      report,\n  session_id:       data.session_id,\n  chat_id:          data.chat_id,\n  language:         lang,\n  raw_response_b64: rawResponseB64\n} }];"
+      },
+      "id": "c4c01032-0000-0000-0000-000000000032",
+      "name": "Format Custom Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 820]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.report_text }}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01033-0000-0000-0000-000000000033",
+      "name": "Send Custom Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1440, 820],
+      "webhookId": "wf04c-send-report",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET status             = 'completed',\n    conversation_state = 'idle',\n    llm_used           = 'ollama_kimi',\n    analysis_type      = 'custom',\n    llm_response       = convert_from(decode($1, 'base64'), 'UTF8')::jsonb,\n    updated_at         = NOW()\nWHERE id = $2::integer",
+        "options": {
+          "queryReplacement": "=={{ $json.raw_response_b64 }}, {{ $json.session_id }}"
+        }
+      },
+      "id": "c4c01034-0000-0000-0000-000000000034",
+      "name": "UPDATE Session Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1680, 820],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Format Custom Report').first().json.chat_id }}",
+        "text": "={{ $('Format Custom Report').first().json.language === 'ENG' ? '━━━━━━━━━━━━━━━━━━━━\\n✅ *Analysis complete!*\\n\\nWhat would you like to do next?' : '━━━━━━━━━━━━━━━━━━━━\\n✅ *Analyse terminée !*\\n\\nQue souhaitez-vous faire maintenant ?' }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📁 Nouveau fichier",
+                    "additionalFields": {
+                      "callback_data": "new_file"
+                    }
+                  },
+                  {
+                    "text": "📊 Analyser autre",
+                    "additionalFields": {
+                      "callback_data": "new_file"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "id": "c4c01035-0000-0000-0000-000000000035",
+      "name": "Send Final Menu Custom",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1920, 820],
+      "webhookId": "wf04c-send-final-menu",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger Custom": {
+      "main": [[{"node": "Extract Message Data", "type": "main", "index": 0}]]
+    },
+    "Extract Message Data": {
+      "main": [[{"node": "IF Cancel", "type": "main", "index": 0}]]
+    },
+    "IF Cancel": {
+      "main": [
+        [{"node": "UPDATE Cancel Idle", "type": "main", "index": 0}],
+        [{"node": "Get Active Session", "type": "main", "index": 0}]
+      ]
+    },
+    "UPDATE Cancel Idle": {
+      "main": [[{"node": "Send Cancel Message", "type": "main", "index": 0}]]
+    },
+    "Get Active Session": {
+      "main": [[{"node": "Extract Session Data", "type": "main", "index": 0}]]
+    },
+    "Extract Session Data": {
+      "main": [[{"node": "Validate Answer", "type": "main", "index": 0}]]
+    },
+    "Validate Answer": {
+      "main": [[{"node": "IF Valid", "type": "main", "index": 0}]]
+    },
+    "IF Valid": {
+      "main": [
+        [{"node": "Switch State", "type": "main", "index": 0}],
+        [{"node": "Send Validation Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Switch State": {
+      "main": [
+        [{"node": "Save Q1", "type": "main", "index": 0}],
+        [{"node": "Save Q2", "type": "main", "index": 0}],
+        [{"node": "Save Q3", "type": "main", "index": 0}],
+        [{"node": "Save Q4", "type": "main", "index": 0}],
+        [{"node": "Save Q5 Set Processing", "type": "main", "index": 0}]
+      ]
+    },
+    "Save Q1": {
+      "main": [[{"node": "UPDATE Q1", "type": "main", "index": 0}]]
+    },
+    "UPDATE Q1": {
+      "main": [[{"node": "Send Q2", "type": "main", "index": 0}]]
+    },
+    "Save Q2": {
+      "main": [[{"node": "UPDATE Q2", "type": "main", "index": 0}]]
+    },
+    "UPDATE Q2": {
+      "main": [[{"node": "Send Q3", "type": "main", "index": 0}]]
+    },
+    "Save Q3": {
+      "main": [[{"node": "UPDATE Q3", "type": "main", "index": 0}]]
+    },
+    "UPDATE Q3": {
+      "main": [[{"node": "Send Q4", "type": "main", "index": 0}]]
+    },
+    "Save Q4": {
+      "main": [[{"node": "UPDATE Q4", "type": "main", "index": 0}]]
+    },
+    "UPDATE Q4": {
+      "main": [[{"node": "Send Q5", "type": "main", "index": 0}]]
+    },
+    "Save Q5 Set Processing": {
+      "main": [[{"node": "UPDATE Set Processing", "type": "main", "index": 0}]]
+    },
+    "UPDATE Set Processing": {
+      "main": [[{"node": "Send Processing Message", "type": "main", "index": 0}]]
+    },
+    "Send Processing Message": {
+      "main": [[{"node": "Get Full Session Data", "type": "main", "index": 0}]]
+    },
+    "Get Full Session Data": {
+      "main": [[{"node": "Build Custom Prompt", "type": "main", "index": 0}]]
+    },
+    "Build Custom Prompt": {
+      "main": [[{"node": "Basic LLM Chain Custom", "type": "main", "index": 0}]]
+    },
+    "Basic LLM Chain Custom": {
+      "main": [[{"node": "Parse Custom Response", "type": "main", "index": 0}]]
+    },
+    "Ollama Model Custom": {
+      "ai_languageModel": [[{"node": "Basic LLM Chain Custom", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Parse Custom Response": {
+      "main": [[{"node": "Format Custom Report", "type": "main", "index": 0}]]
+    },
+    "Format Custom Report": {
+      "main": [[{"node": "Send Custom Report", "type": "main", "index": 0}]]
+    },
+    "Send Custom Report": {
+      "main": [[{"node": "UPDATE Session Completed", "type": "main", "index": 0}]]
+    },
+    "UPDATE Session Completed": {
+      "main": [[{"node": "Send Final Menu Custom", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

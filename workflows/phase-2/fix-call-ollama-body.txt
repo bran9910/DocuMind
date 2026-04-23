@@ -1,0 +1,39 @@
+===== FIX : Node "Call Ollama Fallback" — Body Parameters =====
+
+PROBLÈME : Le body est vide à l'import JSON. Ollama reçoit une requête sans body → retourne "" → Parse échoue → rapport vide.
+
+ACTION : Dans n8n, ouvrir WF-03 → node "Call Ollama Fallback"
+
+1. Dans "Body", sélectionner : JSON/RAW
+2. Coller ce JSON dans le champ "Body" :
+
+{
+  "model": "kimi-k2.5:cloud",
+  "prompt": "={{ $('Build Grok Prompt').item.json.prompt }}",
+  "stream": false,
+  "format": "json",
+  "options": {
+    "temperature": 0.3,
+    "num_predict": 2000
+  }
+}
+
+IMPORTANT :
+- Le champ "prompt" doit être en mode Expression (icône éclair)
+- "stream": false est OBLIGATOIRE sinon Ollama streame et n8n ne parse pas
+- "format": "json" force Ollama à retourner du JSON valide
+
+3. Sauvegarder.
+
+===== VÉRIFICATION =====
+
+Après correction, tester avec un CSV.
+La réponse Ollama (dans l'exécution n8n) doit ressembler à :
+{
+  "response": "{\"executive_summary\": \"...\", \"overview\": {...}, ...}",
+  "done": true
+}
+
+Si "response" est vide, vérifier que le modèle kimi-k2.5:cloud est bien chargé :
+  ssh bran9910@204.168.199.123
+  docker exec -it $(docker ps -q -f name=ollama) ollama list

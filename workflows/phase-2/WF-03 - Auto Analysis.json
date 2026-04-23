@@ -1,0 +1,2102 @@
+{
+  "name": "WF-03 - Auto Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "9641962e-bf1b-4ee0-a2f0-1b7d9b39b058",
+      "name": "Telegram: Receive Messages",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -2288,
+        224
+      ],
+      "webhookId": "wf01-telegram-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-start-text",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "/start",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "847638a5-1ba2-4374-943e-32fa0c74987c",
+      "name": "Filter: /start Only",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2064,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les infos du message Telegram\nconst msg = $input.first().json.message;\nconst chatId = msg.chat.id;\nconst userId = msg.from.id;\nconst username = msg.from.username || '';\nconst firstName = msg.from.first_name || '';\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    telegram_id: userId,\n    username: username,\n    first_name: firstName,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "4d55e132-fae9-4817-a7e6-946c526f166c",
+      "name": "Extract User Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1840,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO users (telegram_id, telegram_username, first_name)\nVALUES ($1, $2, $3)\nON CONFLICT (telegram_id) DO UPDATE\nSET last_active_at = NOW(),\n    telegram_username = EXCLUDED.telegram_username\nRETURNING id, telegram_id, language, credits_remaining, is_admin, is_active;",
+        "options": {
+          "queryReplacement": "=={{ $json.telegram_id }}, {{ $json.username }}, {{ $json.first_name }}"
+        }
+      },
+      "id": "7f8ba82b-f46b-44cc-947a-af2da0850f39",
+      "name": "Upsert User DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -1632,
+        128
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-is-active",
+              "leftValue": "={{ $json.is_active }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1652feaf-291a-420a-9941-e41430fc9dd4",
+      "name": "User Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract User Info').item.json.chat_id }}",
+        "text": "⛔ Votre compte n'est pas actif.\nContactez l'administrateur.\n\n⛔ Your account is not active.\nContact the administrator.",
+        "additionalFields": {}
+      },
+      "id": "65a9dd53-6870-4c6b-a2e2-5a959779a152",
+      "name": "Send Banned Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1184,
+        240
+      ],
+      "webhookId": "48cbd88d-3d16-47f4-a4a4-9d2286e48d6d",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract User Info').item.json.chat_id }}",
+        "text": "=🤖 *Bonjour {{ $('Extract User Info').item.json.first_name }} !*\n\nJe suis votre Assistant d'Analyse de Documents et Données.\n\n📄 Je peux analyser : PDF · DOCX · Excel · CSV\n📊 Je génère des rapports détaillés avec graphiques\n🌍 Je parle français et anglais\n\n*Choisissez votre langue / Choose your language :*",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🇫🇷 Français",
+                    "additionalFields": {
+                      "callback_data": "lang_FR"
+                    }
+                  },
+                  {
+                    "text": "🇬🇧 English",
+                    "additionalFields": {
+                      "callback_data": "lang_EN"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "c1fc8745-07f6-421f-8b4a-a94ca58ca67d",
+      "name": "Send Welcome Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1184,
+        16
+      ],
+      "webhookId": "7f9ed095-e50c-46ca-b978-9e6978ebccf9",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "d201c84a-afa9-456d-8fef-cc60255b1e8e",
+      "name": "Telegram: Language Callbacks",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -2304,
+        736
+      ],
+      "webhookId": "wf01b-telegram-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-lang-prefix",
+              "leftValue": "={{ $json.callback_query.data }}",
+              "rightValue": "lang_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4d19d5ad-dc22-4130-8c73-a17dd8130b19",
+      "name": "Filter: lang_ Callbacks",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2080,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cbQuery = $input.first().json.callback_query;\nconst data = cbQuery.data; // 'lang_FR' or 'lang_EN'\nconst lang = data.replace('lang_', ''); // 'FR' or 'EN'\nconst chatId = cbQuery.message.chat.id;\nconst telegramId = cbQuery.from.id;\nconst firstName = cbQuery.from.first_name || '';\nconst callbackId = cbQuery.id;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    telegram_id: telegramId,\n    first_name: firstName,\n    selected_language: lang,\n    callback_query_id: callbackId,\n    is_fr: lang === 'FR'\n  }\n}];"
+      },
+      "id": "68eac95e-f1cd-4f87-a82e-13e411644247",
+      "name": "Extract Lang Choice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1856,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "queryId": "={{ $json.callback_query_id }}",
+        "additionalFields": {
+          "text": "Langue sélectionnée ✅"
+        }
+      },
+      "id": "22cf867c-1249-4070-9176-8a7e98345efb",
+      "name": "Answer Callback Query",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1648,
+        640
+      ],
+      "webhookId": "27504dd9-cfe9-4237-b369-e12c3fbdee00",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users\nSET language = $1, last_active_at = NOW()\nWHERE telegram_id = $2\nRETURNING id, language, credits_remaining;",
+        "options": {
+          "queryReplacement": "=={{ $('Extract Lang Choice').item.json.selected_language }}, {{ $('Extract Lang Choice').item.json.telegram_id }}"
+        }
+      },
+      "id": "5e43b2e5-7832-48b5-b52f-72696ee6b3e5",
+      "name": "Save Language DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -1424,
+        640
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true
+          },
+          "conditions": [
+            {
+              "id": "cond-is-fr",
+              "leftValue": "={{ $('Extract Lang Choice').item.json.selected_language }}",
+              "rightValue": "FR",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ffa41394-e610-4417-9714-0d060edbdaea",
+      "name": "Is French?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Lang Choice').item.json.chat_id }}",
+        "text": "=✅ *Langue française sélectionnée !*\n\n💳 Crédits disponibles : {{ $('Save Language DB').item.json.credits_remaining }}\n\n📎 *Envoyez votre fichier pour commencer l'analyse*\nFormats supportés : PDF · DOCX · Excel (.xlsx) · CSV\n\nTaille maximum : 15 MB",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "384fee61-79d7-4d40-96bd-47a4d921aaff",
+      "name": "Send FR Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -976,
+        528
+      ],
+      "webhookId": "81fd095e-eecd-41d9-898f-7f664edd0da9",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Lang Choice').item.json.chat_id }}",
+        "text": "=✅ *English selected!*\n\n💳 Credits available: {{ $('Save Language DB').item.json.credits_remaining }}\n\n📎 *Send your file to start the analysis*\nSupported formats: PDF · DOCX · Excel (.xlsx) · CSV\n\nMaximum size: 15 MB",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "354c054b-85f7-4229-b6f9-703150d383d1",
+      "name": "Send EN Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -976,
+        736
+      ],
+      "webhookId": "5d4d6c35-e07d-4080-b470-221efb39b3fd",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 400,
+        "width": 1344
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2336,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "798077bc-ff54-4c2b-8b47-b8eee48adc12",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 400,
+        "width": 1664
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2448,
+        512
+      ],
+      "typeVersion": 1,
+      "id": "651fd319-62bf-46b4-bd23-6a6786bd484a",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "a8601806-6cbf-4d2b-8d19-d3a0f7b7088d",
+      "name": "Telegram: Receive File",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -3392,
+        1712
+      ],
+      "webhookId": "wf02-telegram-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-has-doc",
+              "leftValue": "=={{ !!$json.message.document?.file_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "425df8bc-ccc1-4ce4-84af-0259da54de62",
+      "name": "Has Document?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -3168,
+        1712
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json.message;\nconst doc = msg.document;\nconst chatId = msg.chat.id;\nconst telegramId = msg.from.id;\nconst fileSizeMB = doc.file_size / (1024 * 1024);\nconst MAX_SIZE_MB = 15;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    telegram_id: telegramId,\n    file_id: doc.file_id,\n    file_name: doc.file_name || 'fichier_sans_nom',\n    file_size: doc.file_size,\n    file_size_mb: doc.file_size ? (doc.file_size / (1024*1024)).toFixed(2) : '< 1',  // ← ici\n    mime_type: doc.mime_type || '',\n    is_too_large: fileSizeMB > MAX_SIZE_MB\n  }\n}];"
+      },
+      "id": "89320a0a-7c21-4da2-b101-512833b6946e",
+      "name": "Prepare File Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2960,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-too-large",
+              "leftValue": "={{ $json.is_too_large }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5946329e-ca59-435f-b596-a8a1c1a57be4",
+      "name": "File Too Large?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2736,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "=❌ *Fichier trop volumineux*\n\nTaille : {{ $json.file_size_mb }} MB\nMaximum autorisé : 15 MB\n\nCompressez votre fichier ou envoyez un extrait.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "4ef6f1b0-cb48-4d77-a36f-d6b514e39030",
+      "name": "Send Size Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2512,
+        1728
+      ],
+      "webhookId": "3a75c548-0381-437c-b8ab-1015b818c781",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, language, credits_remaining, is_active\nFROM users\nWHERE telegram_id = $1;",
+        "options": {
+          "queryReplacement": "=={{ $('Prepare File Info').item.json.telegram_id }}"
+        }
+      },
+      "id": "b3cdcf4b-d607-4466-82db-080a643cc5dc",
+      "name": "Get User Info",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -2512,
+        1504
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-credits",
+              "leftValue": "=={{ $json.credits_remaining > 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "5669a160-583e-414a-b83e-49190e35db2d",
+      "name": "Has Credits?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2288,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Prepare File Info').item.json.chat_id }}",
+        "text": "💳 *Crédits épuisés*\n\nVous n'avez plus de crédits d'analyse.\nContactez l'administrateur pour en obtenir davantage.\n\n/admin pour info contact",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "c70b53c6-0594-4ada-ad63-d701e810c999",
+      "name": "Send No Credits",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2080,
+        1648
+      ],
+      "webhookId": "f9bdf7b5-48b6-4c9b-a041-4733841b1727",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot8669628425:AAGb2if9JXfnFHSVMLtVgsmsKrQ_1PwwerQ/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "efa8bcb1-63c7-4ad4-9654-cf4b01c6be1e",
+      "name": "Download File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1696,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NODE: Detect File Type — remplacer tout le contenu par ce code\n\nconst fileInfo = $('Prepare File Info').item.json;\nconst fileName = (fileInfo.file_name || '').toLowerCase();\nconst mimeType = (fileInfo.mime_type || '').toLowerCase();\n\nlet detectedType = 'unknown';\n\nif (mimeType.includes('pdf') || fileName.endsWith('.pdf')) {\n  detectedType = 'pdf';\n} else if (mimeType.includes('excel') || mimeType.includes('spreadsheet') ||\n           fileName.match(/\\.(xlsx?|xlsm)$/i)) {\n  detectedType = 'excel';\n} else if (mimeType.includes('word') || mimeType.includes('document') ||\n           fileName.match(/\\.docx?$/i)) {\n  detectedType = 'word';\n} else if (mimeType.includes('csv') || fileName.endsWith('.csv')) {\n  detectedType = 'csv';\n}\n\nconst binaryData = $input.first().binary;\nconst fileKey = binaryData ? Object.keys(binaryData)[0] : null;\n\nlet fileBuffer = '';\nlet fileSizeBytes = fileInfo.file_size || 0;\n\nif (fileKey) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, fileKey);\n  fileBuffer = buffer.toString('base64');\n  fileSizeBytes = buffer.length;\n}\n\nreturn [{\n  json: {\n    ...fileInfo,\n    detectedType,\n    isSupported: ['pdf', 'excel', 'word', 'csv'].includes(detectedType),\n    fileBuffer,\n    file_size: fileSizeBytes\n  }\n}];\n"
+      },
+      "id": "24fff65f-a540-47ca-b0f7-370e810d9835",
+      "name": "Detect File Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-supported",
+              "leftValue": "={{ $json.isSupported }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "30639d83-48c2-48eb-bfbe-3034cd7ab112",
+      "name": "File Supported?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "=❌ *Format non supporté*\n\nFormat détecté : {{ $json.mime_type }}\n\nFormats acceptés :\n📄 PDF (.pdf)\n📝 Word (.docx, .doc)\n📊 Excel (.xlsx, .xls)\n📋 CSV (.csv)",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "444a229f-0598-49e0-9c3e-21395fa0c722",
+      "name": "Send Unsupported",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -992,
+        1696
+      ],
+      "webhookId": "811c7332-5e7d-42a0-8373-de790b69d2a3",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.detectedType }}",
+                    "rightValue": "pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.detectedType }}",
+                    "rightValue": "excel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.detectedType }}",
+                    "rightValue": "word",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.detectedType }}",
+                    "rightValue": "csv",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3bb9dfc6-71cb-4a96-90c6-59ea8fceddab",
+      "name": "Route by File Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -976,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pdfParse = require('pdf-parse');\nconst fileBuffer = Buffer.from($input.first().json.fileBuffer, 'base64');\n\ntry {\n  const data = await pdfParse(fileBuffer, { max: 0 });\n  const maxChars = 12000;\n  const text = data.text;\n  return [{\n    json: {\n      success: true,\n      content_type: 'document',\n      text: text.length > maxChars ? text.substring(0, maxChars) + '\\n...[tronqué]' : text,\n      num_pages: data.numpages,\n      is_truncated: text.length > maxChars,\n      char_count: text.length,\n      preview_text: `${data.numpages} page(s), ${text.length} caractères`,\n      ...$input.first().json\n    }\n  }];\n} catch(e) {\n  return [{ json: { success: false, error: e.message, ...$input.first().json } }];\n}"
+      },
+      "id": "2f11f014-7573-40b3-900a-0aadf32cdfa2",
+      "name": "Extract PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const XLSX = require('xlsx');\nconst fileBuffer = Buffer.from($input.first().json.fileBuffer, 'base64');\n\ntry {\n  const workbook = XLSX.read(fileBuffer, { type: 'buffer' });\n  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];\n  const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: null, blankrows: false });\n\n  const headers = jsonData[0] || [];\n  const rows = jsonData.slice(1, 101).map(row => {\n    const obj = {};\n    headers.forEach((h, i) => { obj[h] = row[i]; });\n    return obj;\n  });\n\n  const preview = `${workbook.SheetNames.length} feuille(s), ${jsonData.length - 1} lignes, ${headers.length} colonnes\\nColonnes : ${headers.slice(0, 6).join(', ')}${headers.length > 6 ? '...' : ''}`;\n\n  return [{\n    json: {\n      success: true,\n      content_type: 'data',\n      columns: headers,\n      data: rows,\n      total_rows: jsonData.length - 1,\n      sheet_names: workbook.SheetNames,\n      preview_text: preview,\n      is_sample: jsonData.length > 102,\n      ...$input.first().json\n    }\n  }];\n} catch(e) {\n  return [{ json: { success: false, error: e.message, ...$input.first().json } }];\n}"
+      },
+      "id": "422ebbab-874b-4a63-b536-f846482af6fe",
+      "name": "Extract Excel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const mammoth = require('mammoth');\nconst fileBuffer = Buffer.from($input.first().json.fileBuffer, 'base64');\n\ntry {\n  const result = await mammoth.extractRawText({ buffer: fileBuffer });\n  const maxChars = 12000;\n  const text = result.value;\n  return [{\n    json: {\n      success: true,\n      content_type: 'document',\n      text: text.length > maxChars ? text.substring(0, maxChars) + '\\n...[tronqué]' : text,\n      is_truncated: text.length > maxChars,\n      char_count: text.length,\n      preview_text: `Document Word, ${text.length} caractères`,\n      ...$input.first().json\n    }\n  }];\n} catch(e) {\n  return [{ json: { success: false, error: e.message, ...$input.first().json } }];\n}"
+      },
+      "id": "7f826287-f605-4f1c-95d7-95755856623c",
+      "name": "Extract Word",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        1568
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileBuffer = Buffer.from($input.first().json.fileBuffer, 'base64');\nconst csvContent = fileBuffer.toString('utf-8');\n\nconst lines = csvContent.split('\\n').filter(l => l.trim());\nconst firstLine = lines[0] || '';\nlet delimiter = ',';\nif (firstLine.includes(';') && !firstLine.includes(',')) delimiter = ';';\nelse if (firstLine.includes('\\t')) delimiter = '\\t';\n\nconst parseLine = (line) => {\n  const res = []; let cur = ''; let inQ = false;\n  for (let i = 0; i < line.length; i++) {\n    const c = line[i];\n    if (c === '\"') { if (inQ && line[i+1] === '\"') { cur += '\"'; i++; } else { inQ = !inQ; } }\n    else if (c === delimiter && !inQ) { res.push(cur.trim()); cur = ''; }\n    else cur += c;\n  }\n  res.push(cur.trim());\n  return res;\n};\n\nconst headers = parseLine(lines[0]);\nconst rows = lines.slice(1, 101).map(l => {\n  const vals = parseLine(l);\n  const row = {};\n  headers.forEach((h, i) => { row[h] = vals[i] || null; });\n  return row;\n});\n\nconst preview = `${lines.length - 1} lignes, ${headers.length} colonnes\\nColonnes : ${headers.slice(0, 6).join(', ')}${headers.length > 6 ? '...' : ''}`;\n\nreturn [{\n  json: {\n    success: true,\n    content_type: 'data',\n    columns: headers,\n    data: rows,\n    total_rows: lines.length - 1,\n    delimiter,\n    preview_text: preview,\n    is_sample: lines.length > 102,\n    ...$input.first().json\n  }\n}];"
+      },
+      "id": "8e517c26-957b-487b-b994-6dacc2d93e84",
+      "name": "Extract CSV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        1712
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sessions (user_id, chat_id, status, file_name, file_type, file_size_bytes, extracted_preview, extracted_data)\nSELECT u.id, $1::bigint, 'extracted', $2, $3, $4::integer, $5,\n  convert_from(decode($6, 'base64'), 'UTF8')::jsonb\nFROM users u WHERE u.telegram_id = $7::bigint\nRETURNING id, session_uuid::text;",
+        "options": {
+          "queryReplacement": "=={{ $json.p1 }}, {{ $json.p2 }}, {{ $json.p3 }}, {{ $json.p4 }}, {{ $json.p5 }}, {{ $json.p6 }}, {{ $json.p7 }}"
+        }
+      },
+      "id": "ff3a3329-797a-4f2f-878d-706f2262fb69",
+      "name": "Save Session DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -48,
+        1504
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst sessionRow = d || {};\nconst fileData = $('Prepare Session Data').item.json;\nconst userRow = $('Get User Info').item.json || {};\n\nconst lang = userRow.language || 'FR';\nconst sessionId = sessionRow.id || 0;\nconst chatId = fileData.p1;           // ← p1 = chat_id\nconst fileName = fileData.p2 || 'fichier';   // ← p2 = file_name\nconst fileType = fileData.p3 || 'unknown';   // ← p3 = detectedType\nconst fileSizeBytes = parseInt(fileData.p4) || 0;\nconst fileSizeMb = (fileSizeBytes / (1024 * 1024)).toFixed(2);\nconst previewText = fileData.p5 || '';       // ← p5 = preview\n\n// Labels selon la langue\nconst isFR = lang === 'FR';\nconst typeLabels = {\n  csv: 'Tableau CSV',\n  excel: 'Fichier Excel',\n  pdf: 'Document PDF',\n  word: 'Document Word',\n  unknown: 'Fichier'\n};\nconst typeLabel = typeLabels[fileType] || 'Fichier';\n\nconst msgFR = `📋 *Aperçu du fichier*\\n\\n📄 *${fileName}*\\n🔹 Type : ${typeLabel}\\n📦 Taille : ${fileSizeMb} MB\\n🆔 Session : \\`${sessionId}\\`\\n\\n*Extrait :*\\n\\`\\`\\`\\n${previewText.substring(0, 300)}\\n\\`\\`\\`\\n\\n*Choisissez le type d'analyse :*`;\n\nconst msgEN = `📋 *File Preview*\\n\\n📄 *${fileName}*\\n🔹 Type: ${typeLabel}\\n📦 Size: ${fileSizeMb} MB\\n🆔 Session: \\`${sessionId}\\`\\n\\n*Extract:*\\n\\`\\`\\`\\n${previewText.substring(0, 300)}\\n\\`\\`\\`\\n\\n*Choose analysis type:*`;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    session_id: sessionId,\n    message_text: isFR ? msgFR : msgEN,\n    auto_button_fr: isFR ? '⚡ Analyse Automatique' : '⚡ Auto Analysis',\n    auto_button_en: isFR ? '🎯 Analyse Personnalisée' : '🎯 Custom Analysis',\n    callback_auto: `auto_${sessionId}`,\n    callback_custom: `custom_${sessionId}`,\n    lang: lang\n  }\n}];"
+      },
+      "id": "e5ed3b83-0928-4e24-ae2a-9b6f963b66d8",
+      "name": "Build Preview Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        1504
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message_text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "=={{ $json.auto_button_fr }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.callback_auto }}"
+                    }
+                  },
+                  {
+                    "text": "=={{ $json.auto_button_en }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.callback_custom }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "1cc79fae-65f4-472d-8d42-bbd96a28b2cc",
+      "name": "Send Preview + Menu",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        416,
+        1504
+      ],
+      "webhookId": "3214ef9c-ea82-48f2-bd34-363296ba0c0a",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 704,
+        "width": 4208
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -3472,
+        1200
+      ],
+      "typeVersion": 1,
+      "id": "2468b702-7cb3-4b21-a584-8949cafdffc6",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "48e3513d-1cf1-4c9a-b132-ed7c3cf25b9a",
+      "name": "Callback: Auto",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -4144,
+        2528
+      ],
+      "webhookId": "wf03-telegram-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-auto-prefix",
+              "leftValue": "={{ $json.callback_query.data }}",
+              "rightValue": "auto_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f59df8c5-e28a-4fef-9d4c-02bb23304e95",
+      "name": "Filter: auto_ Callbacks",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -3936,
+        2528
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.callback_query.data.replace(/^=/, '');\nconst sessionId = parseInt(raw.replace('auto_', ''));\nconst chatId = $input.first().json.callback_query.message.chat.id;\nconst telegramId = $input.first().json.callback_query.from.id;\nconst callbackQueryId = $input.first().json.callback_query.id;\n\nreturn [{\n  json: {\n    session_id: sessionId,\n    chat_id: chatId,\n    telegram_id: telegramId,\n    callback_query_id: callbackQueryId\n  }\n}];"
+      },
+      "id": "f6a90e30-350c-45fa-ad8c-88ea4799af74",
+      "name": "Extract Session ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3712,
+        2432
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "queryId": "={{ $json.callback_query_id }}",
+        "additionalFields": {
+          "text": "⏳ Analyse en cours..."
+        }
+      },
+      "id": "9d7587ec-e6e1-4068-9353-b89c7a3447d5",
+      "name": "Answer Callback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -3488,
+        2432
+      ],
+      "webhookId": "edfbd24d-6564-4013-be12-85dc91aa9b66",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Session ID').item.json.chat_id }}",
+        "text": "⏳ *Analyse en cours...*\n\n🔍 Extraction des données\n🤖 Interrogation de l'IA\n📊 Génération des graphiques\n\n_Cela prend 15-30 secondes..._",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "04f0e33b-c4e7-4ea4-8690-1468bf3ef9ec",
+      "name": "Send Analyzing Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -3168,
+        2432
+      ],
+      "webhookId": "73171c2f-f909-4548-b94c-7c0898a8fdc9",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.id, s.session_uuid, s.file_name, s.file_type, s.extracted_data,\n       u.language, u.telegram_id, u.credits_remaining\nFROM sessions s\nJOIN users u ON s.user_id = u.id\nWHERE s.id = $1 AND s.chat_id = $2;",
+        "options": {
+          "queryReplacement": "=={{ $('Extract Session ID').item.json.session_id }}, {{ $('Extract Session ID').item.json.chat_id }}"
+        }
+      },
+      "id": "da787b48-1501-49e9-9752-acc3753a822d",
+      "name": "Load Session DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -2880,
+        2432
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-session-exists",
+              "leftValue": "=={{ !!$json.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "looseTypeValidation": true
+        }
+      },
+      "id": "44380bf2-db1c-47bf-9dc4-9e4de13ecc3f",
+      "name": "Session Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2608,
+        2432
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Session ID').item.json.chat_id }}",
+        "text": "❌ Session introuvable ou crédits épuisés.\nEnvoyez un nouveau fichier pour recommencer.",
+        "additionalFields": {}
+      },
+      "id": "81c3ebaa-f60e-447a-ba54-76a659d7a2fa",
+      "name": "Send Session Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2384,
+        2544
+      ],
+      "webhookId": "1c2ca85a-cef9-49f5-8845-36fe0a03ae20",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const session = $input.first().json;  // ← supprimer [0]\nconst extractedData = session.extracted_data;\nconst lang = session.language || 'FR';\nconst fileType = session.file_type;\nconst fileName = session.file_name;\n\nlet prompt = '';\n\nif (extractedData.content_type === 'data') {\n  const dataStr = JSON.stringify({\n    columns: extractedData.columns,\n    sample_data: extractedData.data ? extractedData.data.slice(0, 50) : [],\n    total_rows: extractedData.total_rows\n  });\n\n  prompt = `Tu es un data analyst senior. Analyse ce dataset et produis un rapport complet.\n\nDONNÉES :\n${dataStr}\n\nFICHIER : ${fileName} (${fileType.toUpperCase()})\nLANGUE DE RÉPONSE : ${lang === 'FR' ? 'Français' : 'English'}\n\nINSTRUCTIONS :\n1. Analyse statistique descriptive par colonne\n2. Détecte tendances, anomalies, corrélations\n3. Propose 3 graphiques pertinents avec leurs données\n4. Produis un résumé exécutif actionnable\n\nFORMAT REQUIS (JSON valide uniquement, sans markdown) :\n{\n  \"executive_summary\": \"3-4 phrases synthétiques\",\n  \"overview\": {\"rows\": N, \"columns\": N, \"data_quality\": \"score/10\", \"period\": \"description\"},\n  \"key_findings\": [\"finding 1\", \"finding 2\", \"finding 3\"],\n  \"statistics\": {\"colonne\": {\"type\": \"numeric|categorical\", \"insight\": \"observation clé\"}},\n  \"detections\": {\"trends\": [], \"anomalies\": [], \"correlations\": []},\n  \"charts\": [\n    {\"type\": \"line|bar|scatter|pie\", \"title\": \"titre\", \"x\": \"colonne\", \"y\": \"colonne\", \"insight\": \"explication\"},\n    {\"type\": \"bar\", \"title\": \"titre 2\", \"x\": \"colonne\", \"y\": \"colonne\", \"insight\": \"explication\"},\n    {\"type\": \"scatter\", \"title\": \"titre 3\", \"x\": \"colonne\", \"y\": \"colonne\", \"insight\": \"explication\"}\n  ],\n  \"recommendations\": [\"reco 1\", \"reco 2\"]\n}`;\n\n} else {\n  const text = extractedData.text || '';\n\n  prompt = `Tu es un analyste de documents senior. Analyse ce document.\n\nDOCUMENT :\n${text}\n\nFICHIER : ${fileName} (${fileType.toUpperCase()})\nLANGUE DE RÉPONSE : ${lang === 'FR' ? 'Français' : 'English'}\n\nINSTRUCTIONS :\n1. Résumé exécutif (3-4 phrases)\n2. Points clés (5 max)\n3. Insights non évidents (2-3)\n4. Public cible et type de document\n\nFORMAT REQUIS (JSON valide uniquement, sans markdown) :\n{\n  \"executive_summary\": \"string\",\n  \"key_points\": [\"point 1\", \"point 2\", \"point 3\"],\n  \"insights\": [\"insight 1\", \"insight 2\"],\n  \"document_type\": \"type détecté\",\n  \"target_audience\": \"public cible\",\n  \"quality_score\": \"score/10\",\n  \"entities_detected\": [\"entités importantes\"],\n  \"recommendations\": [\"reco 1\"]\n}`;\n}\n\nreturn [{\n  json: {\n    session_id: session.id,\n    chat_id: $('Extract Session ID').item.json.chat_id,\n    telegram_id: $('Extract Session ID').item.json.telegram_id,\n    language: lang,\n    file_type: fileType,\n    file_name: fileName,\n    content_type: extractedData.content_type,\n    extracted_data: extractedData,\n    prompt: prompt,\n    start_time: Date.now()\n  }\n}];"
+      },
+      "id": "369cbecb-55d5-4ab2-9ae5-230468b8875b",
+      "name": "Build Grok Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2384,
+        2336
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.x.ai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROK_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "446a9b4d-db27-44b1-a609-3ec91890fe2c",
+      "name": "Call Grok API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2176,
+        2336
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-grok-choices",
+              "leftValue": "={{ $json.choices !== undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b447ee30-1d2c-4928-adcd-dc3ac9a1396d",
+      "name": "Grok Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1952,
+        2336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst content = response.choices[0].message.content;\nconst startTime = $('Build Grok Prompt').item.json.start_time;\nconst responseTimeMs = Date.now() - startTime;\nconst tokensUsed = response.usage ? response.usage.total_tokens : 0;\n\nlet parsed = null;\nlet parseError = null;\n\ntry {\n  let clean = content.trim();\n  if (clean.startsWith('```')) {\n    clean = clean.replace(/^```json?\\n?/, '').replace(/\\n?```$/, '');\n  }\n  parsed = JSON.parse(clean);\n} catch(e) {\n  parseError = e.message;\n  parsed = {\n    executive_summary: content.substring(0, 500),\n    key_points: [\"Analyse disponible en format texte\"],\n    parse_error: true\n  };\n}\n\nreturn [{\n  json: {\n    ...$('Build Grok Prompt').item.json,\n    grok_response: parsed,\n    raw_content: content,\n    response_time_ms: responseTimeMs,\n    tokens_used: tokensUsed,\n    llm_used: 'grok',\n    parse_success: !parseError\n  }\n}];"
+      },
+      "id": "7d464aba-10b7-4bcb-9108-cbb74e4d2959",
+      "name": "Parse Grok Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1728,
+        2224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "2159c853-41f8-4476-8511-be1c6b3e9960",
+      "name": "Call Ollama Fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1728,
+        2432
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst content = response.response || '';\nconst startTime = $('Build Grok Prompt').item.json.start_time;\n\nlet parsed = null;\ntry {\n  let clean = content.trim();\n  if (clean.startsWith('```')) clean = clean.replace(/^```json?\\n?/, '').replace(/\\n?```$/, '');\n  parsed = JSON.parse(clean);\n} catch(e) {\n  parsed = {\n    executive_summary: content.substring(0, 500),\n    key_points: [\"Analyse en mode dégradé (Ollama fallback)\"],\n    parse_error: true\n  };\n}\n\nreturn [{\n  json: {\n    ...$('Build Grok Prompt').item.json,\n    grok_response: parsed,\n    raw_content: content,\n    response_time_ms: Date.now() - startTime,\n    tokens_used: 0,\n    llm_used: 'ollama',\n    parse_success: !parsed.parse_error\n  }\n}];"
+      },
+      "id": "3b18d93e-aab3-408b-b84f-7908a6c341e7",
+      "name": "Parse Ollama Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1504,
+        2432
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst r = d.grok_response;\nconst isFR = d.language === 'FR';\n\nlet message = '';\n\nif (d.content_type === 'data') {\n  const header = isFR ? '📊 *RAPPORT D\\'ANALYSE*' : '📊 *ANALYSIS REPORT*';\n  const overview = r.overview || {};\n  const findings = (r.key_findings || []).map((f, i) => `${i+1}. ${f}`).join('\\n');\n  const recos = (r.recommendations || []).map(rec => `• ${rec}`).join('\\n');\n\n  message = `${header}\\n📄 *${d.file_name}*\\n🤖 ${d.llm_used === 'ollama' ? '⚠️ Mode fallback (Ollama)' : 'Grok AI'}\\n\\n📋 *${isFR ? \"Vue d'ensemble\" : 'Overview'}*\\n${overview.rows || '?'} lignes · ${overview.columns || '?'} colonnes · Qualité : ${overview.data_quality || '?'}/10\\n\\n✨ *${isFR ? 'Résumé Exécutif' : 'Executive Summary'}*\\n${r.executive_summary || ''}\\n\\n🔑 *${isFR ? 'Points Clés' : 'Key Findings'}*\\n${findings}\\n\\n💡 *${isFR ? 'Recommandations' : 'Recommendations'}*\\n${recos}\\n\\n⏱ _${d.response_time_ms}ms · ${d.tokens_used} tokens_`;\n\n} else {\n  const header = isFR ? '📄 *ANALYSE DU DOCUMENT*' : '📄 *DOCUMENT ANALYSIS*';\n  const points = (r.key_points || []).map((p, i) => `${i+1}. ${p}`).join('\\n');\n  const insights = (r.insights || []).map(ins => `💡 ${ins}`).join('\\n');\n\n  message = `${header}\\n📄 *${d.file_name}*\\n\\n✨ *${isFR ? 'Résumé Exécutif' : 'Executive Summary'}*\\n${r.executive_summary || ''}\\n\\n🔑 *${isFR ? 'Points Clés' : 'Key Points'}*\\n${points}\\n\\n🔍 *Insights*\\n${insights}\\n\\n🎯 *${isFR ? 'Public Cible' : 'Target Audience'}*\\n${r.target_audience || 'Non déterminé'} · Qualité : ${r.quality_score || '?'}/10\\n\\n⏱ _${d.response_time_ms}ms_`;\n}\n\n// Limiter à 4096 chars (limite Telegram)\nif (message.length > 4096) message = message.substring(0, 4090) + '..._';\n\nreturn [{\n  json: {\n    ...d,\n    report_message: message,\n    charts: d.grok_response.charts || []\n  }\n}];"
+      },
+      "id": "d15cf4a7-76c0-444a-b9db-fc10ca6d9b23",
+      "name": "Format Report Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1296,
+        2336
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.report_message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "545fdcf5-23da-4503-b517-3b50379627a3",
+      "name": "Send Report Text",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1072,
+        2336
+      ],
+      "webhookId": "ffeaa641-eeac-461b-8807-b11ba9543400",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst charts = d.charts || [];\nconst extractedData = d.extracted_data;\n\nif (d.content_type !== 'data' || !charts.length || !extractedData.data) {\n  return [{ json: { ...d, chart_urls: [], charts_count: 0 } }];\n}\n\nconst rows = extractedData.data || [];\nconst cols = extractedData.columns || [];\nconst chartUrls = [];\n\nfor (const chart of charts.slice(0, 3)) {\n  const type = chart.type || 'bar';\n  const xCol = chart.x || chart.x_axis || cols[0];\n  const yCol = chart.y || chart.y_axis || cols[1];\n\n  if (!xCol || !yCol) continue;\n\n  const xValues = rows.map(r => r[xCol]).filter(v => v != null).slice(0, 20);\n  const yValues = rows.map(r => parseFloat(r[yCol])).filter(v => !isNaN(v)).slice(0, 20);\n\n  if (!xValues.length || !yValues.length) continue;\n\n  const chartConfig = {\n    type: type,\n    data: {\n      labels: type !== 'scatter' ? xValues.map(String) : undefined,\n      datasets: [{\n        label: yCol,\n        data: type === 'scatter'\n          ? xValues.map((x, i) => ({ x, y: yValues[i] }))\n          : yValues,\n        backgroundColor: 'rgba(99, 102, 241, 0.5)',\n        borderColor: 'rgba(99, 102, 241, 1)',\n        borderWidth: 2,\n        fill: false,\n        tension: 0.3\n      }]\n    },\n    options: {\n      plugins: { title: { display: true, text: chart.title || `${yCol} par ${xCol}` } }\n    }\n  };\n\n  const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));\n  chartUrls.push({\n    url: `https://quickchart.io/chart?c=${encodedConfig}&w=700&h=400&bkg=white`,\n    title: chart.title || '',\n    insight: chart.insight || ''\n  });\n}\n\nreturn [{ json: { ...d, chart_urls: chartUrls, charts_count: chartUrls.length } }];"
+      },
+      "id": "c36aa537-6fdc-42e9-a2c6-ed28bd3b9cf9",
+      "name": "Generate Chart URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -848,
+        2336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst chatId = d.result?.chat?.id || d.chat_id;\nconst charts = d.chart_urls || [];\n\nif (!charts.length) {\n  return [];\n}\n\n// Retourner un item par graphique\nreturn charts.map(chart => ({\n  json: {\n    chat_id: chatId,\n    photo_url: chart.url,\n    caption: `📊 ${chart.title}\\n_${chart.insight}_`,\n    session_id: d.session_id,\n    telegram_id: d.telegram_id,\n    llm_used: d.llm_used,\n    tokens_used: d.tokens_used,\n    response_time_ms: d.response_time_ms,\n    charts_count: charts.length,\n    grok_response: d.grok_response,\n    has_charts: true\n  }\n}));"
+      },
+      "id": "3622fa56-07ac-48b5-b5a3-5ea215c13109",
+      "name": "Split Charts for Sending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        2240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $json.chat_id }}",
+        "additionalFields": {
+          "caption": "={{ $json.caption }}",
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "b57bb9e2-a0f4-4554-b818-b5f12624955f",
+      "name": "Send Chart Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        2240
+      ],
+      "webhookId": "82862e69-fee8-4b3c-b1c8-9afb6fcabdad",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Format Report Message').item.json.chat_id }}",
+        "text": "━━━━━━━━━━━━━━━━━━━━\n_Que souhaitez-vous faire ?_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "3b5eafe4-56e9-4dc3-bb72-5124493c8cfc",
+      "name": "Send Action Menu",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -624,
+        2480
+      ],
+      "webhookId": "a5fe8912-1ccd-4815-9915-be3e01f0b16d",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET status = 'completed',\n    analysis_type = 'auto',\n    llm_used = $1,\n    llm_response = $2::jsonb,\n    llm_tokens_used = $3,\n    llm_response_time_ms = $4,\n    charts_generated = $5,\n    updated_at = NOW()\nWHERE id = $6;\n\nUPDATE users\nSET credits_remaining = credits_remaining - 1,\n    last_active_at = NOW()\nWHERE telegram_id = $7;\n\nINSERT INTO analytics (date, total_sessions, total_auto, grok_calls, ollama_calls, total_tokens)\nVALUES (CURRENT_DATE, 1, 1,\n  CASE WHEN $1 = 'grok' THEN 1 ELSE 0 END,\n  CASE WHEN $1 = 'ollama' THEN 1 ELSE 0 END,\n  $3)\nON CONFLICT (date) DO UPDATE\nSET total_sessions = analytics.total_sessions + 1,\n    total_auto = analytics.total_auto + 1,\n    grok_calls = analytics.grok_calls + CASE WHEN $1 = 'grok' THEN 1 ELSE 0 END,\n    ollama_calls = analytics.ollama_calls + CASE WHEN $1 = 'ollama' THEN 1 ELSE 0 END,\n    total_tokens = analytics.total_tokens + $3;",
+        "options": {
+          "queryReplacement": "=={{ $json.p1 }}, {{ $json.p2 }}, {{ $json.p3 }}, {{ $json.p4 }}, {{ $json.p5 }}, {{ $json.p6 }}, {{ $json.p7 }}"
+        }
+      },
+      "id": "cee568b8-2f96-4c33-897e-8f6f6a4150d4",
+      "name": "Update Session & Credits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -176,
+        2480
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "0Q49g6uGiskc2PwT",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 592,
+        "width": 4480
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -4240,
+        2160
+      ],
+      "typeVersion": 1,
+      "id": "f54fc7ab-079a-4d19-b0ca-2ab9fb9ef50d",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot8669628425:AAGb2if9JXfnFHSVMLtVgsmsKrQ_1PwwerQ/getFile?file_id={{ $('Prepare File Info').item.json.file_id }}",
+        "options": {}
+      },
+      "id": "f933f718-6d3e-48d0-96ff-0f117e72fc06",
+      "name": "Get File URL1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1968,
+        1472
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NODE: Prepare Session Data — remplacer tout le contenu par ce code\n\nconst d = $input.first().json;\nconst extracted = {\n  columns: d.columns || null,\n  data: (d.data || []).slice(0, 50),\n  text: d.text || null,\n  content_type: d.content_type || null\n};\n\nreturn [{json: {\n  p1: String(d.chat_id),\n  p2: d.file_name || 'fichier',\n  p3: d.detectedType || 'unknown',\n  p4: String(d.file_size || 0),\n  p5: (d.preview_text || 'Extrait').substring(0, 200).replace(/[,\\n\\r]/g, ' ').trim(),\n  p6: Buffer.from(JSON.stringify(extracted)).toString('base64'),\n  p7: String(d.telegram_id)\n}}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        1504
+      ],
+      "id": "5e5936ef-775e-4260-8eba-3a4c9e1c29f9",
+      "name": "Prepare Session Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sessionData = $('Extract Session ID').item.json;\nconst parseData = $('Parse Ollama Response').item.json;\n\nreturn [{json: {\n  p1: parseData.llm_used || 'ollama',\n  p2: JSON.stringify(parseData.analysis || parseData.report || {}),\n  p3: String(parseData.tokens_used || 0),\n  p4: String(parseData.response_time_ms || 0),\n  p5: '0',\n  p6: String(sessionData.session_id),\n  p7: String(sessionData.telegram_id)\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        2480
+      ],
+      "id": "be928d3e-9486-4fe3-a9b8-ad67d9ae1348",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram: Receive Messages": {
+      "main": [
+        [
+          {
+            "node": "Filter: /start Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: /start Only": {
+      "main": [
+        [
+          {
+            "node": "Extract User Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract User Info": {
+      "main": [
+        [
+          {
+            "node": "Upsert User DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert User DB": {
+      "main": [
+        [
+          {
+            "node": "User Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "User Active?": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Banned Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Language Callbacks": {
+      "main": [
+        [
+          {
+            "node": "Filter: lang_ Callbacks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: lang_ Callbacks": {
+      "main": [
+        [
+          {
+            "node": "Extract Lang Choice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Lang Choice": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback Query": {
+      "main": [
+        [
+          {
+            "node": "Save Language DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Language DB": {
+      "main": [
+        [
+          {
+            "node": "Is French?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is French?": {
+      "main": [
+        [
+          {
+            "node": "Send FR Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send EN Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Receive File": {
+      "main": [
+        [
+          {
+            "node": "Has Document?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Document?": {
+      "main": [
+        [
+          {
+            "node": "Prepare File Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare File Info": {
+      "main": [
+        [
+          {
+            "node": "File Too Large?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Too Large?": {
+      "main": [
+        [
+          {
+            "node": "Send Size Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get User Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Info": {
+      "main": [
+        [
+          {
+            "node": "Has Credits?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Credits?": {
+      "main": [
+        [
+          {
+            "node": "Get File URL1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send No Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Detect File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect File Type": {
+      "main": [
+        [
+          {
+            "node": "File Supported?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Supported?": {
+      "main": [
+        [
+          {
+            "node": "Route by File Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by File Type": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Excel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Word",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Excel": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Word": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract CSV": {
+      "main": [
+        [
+          {
+            "node": "Prepare Session Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Session DB": {
+      "main": [
+        [
+          {
+            "node": "Build Preview Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Preview Message": {
+      "main": [
+        [
+          {
+            "node": "Send Preview + Menu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback: Auto": {
+      "main": [
+        [
+          {
+            "node": "Filter: auto_ Callbacks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: auto_ Callbacks": {
+      "main": [
+        [
+          {
+            "node": "Extract Session ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Session ID": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback": {
+      "main": [
+        [
+          {
+            "node": "Send Analyzing Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Analyzing Message": {
+      "main": [
+        [
+          {
+            "node": "Load Session DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Session DB": {
+      "main": [
+        [
+          {
+            "node": "Session Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session Valid?": {
+      "main": [
+        [
+          {
+            "node": "Build Grok Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Session Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Grok Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Grok API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Grok API": {
+      "main": [
+        [
+          {
+            "node": "Grok Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grok Success?": {
+      "main": [
+        [
+          {
+            "node": "Parse Grok Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Ollama Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Grok Response": {
+      "main": [
+        [
+          {
+            "node": "Format Report Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Ollama Fallback": {
+      "main": [
+        [
+          {
+            "node": "Parse Ollama Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ollama Response": {
+      "main": [
+        [
+          {
+            "node": "Format Report Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report Message": {
+      "main": [
+        [
+          {
+            "node": "Send Report Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Report Text": {
+      "main": [
+        [
+          {
+            "node": "Generate Chart URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Chart URLs": {
+      "main": [
+        [
+          {
+            "node": "Split Charts for Sending",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Action Menu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Charts for Sending": {
+      "main": [
+        [
+          {
+            "node": "Send Chart Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Chart Photo": {
+      "main": [
+        []
+      ]
+    },
+    "Send Action Menu": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get File URL1": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Session Data": {
+      "main": [
+        [
+          {
+            "node": "Save Session DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Session & Credits": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Update Session & Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1a41f613-e68a-487f-a993-0905890db8a2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d070d47b2219f24a2c9c0a86b7526b15caa10cf38cc526b18e722b7e71261dbd"
+  },
+  "id": "Qp82qJoX84KnW0Zg",
+  "tags": []
+}

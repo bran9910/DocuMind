@@ -1,0 +1,307 @@
+{
+  "name": "WF-04 - Auto Analysis (AI Agent)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["callback_query"],
+        "additionalFields": {}
+      },
+      "id": "wf04-node-01",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 300],
+      "webhookId": "wf04-auto-webhook-v1",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pattern n8n : fix préfixe = dans callback data\nconst raw = $input.first().json.callback_query.data.replace(/^=/, '');\n\n// Ne traiter que les callbacks auto_\nif (!raw.startsWith('auto_')) {\n  return [];\n}\n\nconst parts = raw.split('_');\nconst sessionId = parseInt(parts[1]);\n\nreturn [{\n  json: {\n    analysis_type: 'auto',\n    session_id: sessionId,\n    chat_id: $input.first().json.callback_query.message.chat.id,\n    telegram_id: $input.first().json.callback_query.from.id,\n    message_id: $input.first().json.callback_query.message.message_id\n  }\n}];"
+      },
+      "id": "wf04-node-02",
+      "name": "Extract Callback Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "⏳ *Analyse en cours...*\n\n🔍 Extraction des données\n🤖 Interrogation de l'IA\n📊 Génération des graphiques\n\n_Cela prend 15-30 secondes..._",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "wf04-node-03",
+      "name": "Send Analyzing Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [580, 300],
+      "webhookId": "wf04-auto-webhook-v1",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.id, s.file_name, s.file_type, s.file_size_bytes, s.extracted_data::text AS extracted_data_raw, u.language, u.telegram_id, s.chat_id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1 AND s.status = 'extracted' LIMIT 1",
+        "options": {}
+      },
+      "id": "wf04-node-04",
+      "name": "Get Session from DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [820, 300],
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER_PAR_ID_POSTGRES",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\nconst callbackData = $('Extract Callback Data').item.json;\n\n// Parse extracted_data (stocké en JSONB, retourné comme text)\nlet extractedData = {};\ntry {\n  const raw = row.extracted_data_raw || '{}';\n  extractedData = typeof raw === 'object' ? raw : JSON.parse(raw);\n} catch(e) {\n  extractedData = { content_type: 'document', text: '' };\n}\n\nconst lang = row.language || 'FR';\nconst fileName = row.file_name || 'fichier';\nconst fileType = row.file_type || 'unknown';\nconst contentType = extractedData.content_type || 'document';\n\nlet userPrompt = '';\n\nif (contentType === 'data') {\n  const dataStr = JSON.stringify({\n    columns: extractedData.columns || [],\n    sample_data: (extractedData.data || []).slice(0, 50),\n    total_rows: extractedData.total_rows || 0\n  });\n  userPrompt = 'Analyse ce dataset et produis un rapport complet.\\n\\nDONNÉES :\\n' + dataStr + '\\n\\nFICHIER : ' + fileName + ' (' + fileType.toUpperCase() + ')\\nLANGUE : ' + (lang === 'FR' ? 'Français' : 'English') + '\\n\\nFORMAT REQUIS (JSON pur, sans markdown, sans texte avant/après) :\\n{\\n  \"executive_summary\": \"3-4 phrases synthétiques\",\\n  \"overview\": {\"rows\": N, \"columns\": N, \"data_quality\": \"X/10\"},\\n  \"key_findings\": [\"finding 1\", \"finding 2\", \"finding 3\"],\\n  \"detections\": {\"trends\": [], \"anomalies\": [], \"correlations\": []},\\n  \"charts\": [{\"type\": \"bar\", \"title\": \"titre\", \"x\": \"colonne_x\", \"y\": \"colonne_y\", \"insight\": \"explication\"}],\\n  \"recommendations\": [\"reco 1\", \"reco 2\"]\\n}';\n} else {\n  const text = (extractedData.text || '').substring(0, 8000);\n  userPrompt = 'Analyse ce document et produis un rapport structuré.\\n\\nDOCUMENT :\\n' + text + '\\n\\nFICHIER : ' + fileName + ' (' + fileType.toUpperCase() + ')\\nLANGUE : ' + (lang === 'FR' ? 'Français' : 'English') + '\\n\\nFORMAT REQUIS (JSON pur, sans markdown, sans texte avant/après) :\\n{\\n  \"executive_summary\": \"3-4 phrases\",\\n  \"key_points\": [\"point 1\", \"point 2\", \"point 3\"],\\n  \"insights\": [\"insight 1\", \"insight 2\"],\\n  \"document_type\": \"type détecté\",\\n  \"target_audience\": \"public cible\",\\n  \"quality_score\": \"X/10\",\\n  \"recommendations\": [\"reco 1\"]\\n}';\n}\n\nreturn [{\n  json: {\n    session_id: row.id || callbackData.session_id,\n    chat_id: row.chat_id || callbackData.chat_id,\n    telegram_id: row.telegram_id || callbackData.telegram_id,\n    language: lang,\n    file_name: fileName,\n    file_type: fileType,\n    content_type: contentType,\n    extracted_data: extractedData,\n    user_prompt: userPrompt,\n    start_time: Date.now()\n  }\n}];"
+      },
+      "id": "wf04-node-05",
+      "name": "Prepare Agent Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 300]
+    },
+    {
+      "parameters": {
+        "agent": "conversationalAgent",
+        "promptType": "define",
+        "text": "={{ $json.user_prompt }}",
+        "options": {
+          "systemMessage": "Tu es un expert data analyst et analyste de documents. Tu réponds UNIQUEMENT en JSON valide, sans markdown, sans explication. Retourne seulement le JSON demandé, rien avant, rien après."
+        }
+      },
+      "id": "wf04-node-06",
+      "name": "Grok Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "grok-3",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 4000
+        }
+      },
+      "id": "wf04-node-07",
+      "name": "Grok Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [1300, 540],
+      "credentials": {
+        "openAiApi": {
+          "id": "REMPLACER_PAR_ID_GROK",
+          "name": "Grok API (xAI)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const agentOutput = $input.first().json;\nconst metadata = $('Prepare Agent Input').item.json;\nconst rawOutput = agentOutput.output || '';\nconst responseTimeMs = Date.now() - metadata.start_time;\n\nlet analysis = null;\ntry {\n  let clean = rawOutput.trim();\n  // Supprimer blocs markdown si présents\n  if (clean.startsWith('```')) {\n    clean = clean.replace(/^```json?\\n?/, '').replace(/\\n?```$/, '');\n  }\n  // Extraire le JSON entre { et }\n  const jsonStart = clean.indexOf('{');\n  const jsonEnd = clean.lastIndexOf('}');\n  if (jsonStart !== -1 && jsonEnd !== -1) {\n    clean = clean.substring(jsonStart, jsonEnd + 1);\n  }\n  analysis = JSON.parse(clean);\n} catch(e) {\n  analysis = {\n    executive_summary: rawOutput.substring(0, 500) || 'Analyse non disponible',\n    key_findings: ['Erreur parsing JSON — vérifier le modèle IA'],\n    parse_error: true\n  };\n}\n\nreturn [{\n  json: {\n    ...metadata,\n    analysis: analysis,\n    response_time_ms: responseTimeMs,\n    llm_used: 'grok',\n    parse_success: !analysis.parse_error\n  }\n}];"
+      },
+      "id": "wf04-node-08",
+      "name": "Parse Agent Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst r = d.analysis;\nconst isFR = d.language === 'FR';\nlet message = '';\n\nif (d.content_type === 'data') {\n  const header = isFR ? '📊 *RAPPORT D\\'ANALYSE*' : '📊 *ANALYSIS REPORT*';\n  const overview = r.overview || {};\n  const findings = (r.key_findings || []).map((f, i) => (i+1) + '. ' + f).join('\\n');\n  const recos = (r.recommendations || []).map(rec => '• ' + rec).join('\\n');\n  message = header + '\\n📄 *' + d.file_name + '*\\n🤖 Grok AI\\n\\n📋 *' + (isFR ? \"Vue d'ensemble\" : 'Overview') + '*\\n' + (overview.rows || '?') + ' lignes · ' + (overview.columns || '?') + ' colonnes · Qualité : ' + (overview.data_quality || '?') + '/10\\n\\n✨ *' + (isFR ? 'Résumé Exécutif' : 'Executive Summary') + '*\\n' + (r.executive_summary || '') + '\\n\\n🔑 *' + (isFR ? 'Points Clés' : 'Key Findings') + '*\\n' + findings + '\\n\\n💡 *' + (isFR ? 'Recommandations' : 'Recommendations') + '*\\n' + recos + '\\n\\n⏱ _' + d.response_time_ms + 'ms · Grok AI_';\n} else {\n  const header = isFR ? '📄 *ANALYSE DU DOCUMENT*' : '📄 *DOCUMENT ANALYSIS*';\n  const points = (r.key_points || []).map((p, i) => (i+1) + '. ' + p).join('\\n');\n  const insights = (r.insights || []).map(ins => '💡 ' + ins).join('\\n');\n  message = header + '\\n📄 *' + d.file_name + '*\\n🤖 Grok AI\\n\\n✨ *' + (isFR ? 'Résumé Exécutif' : 'Executive Summary') + '*\\n' + (r.executive_summary || '') + '\\n\\n🔑 *' + (isFR ? 'Points Clés' : 'Key Points') + '*\\n' + points + '\\n\\n🔍 *Insights*\\n' + insights + '\\n\\n🎯 *' + (isFR ? 'Public Cible' : 'Target Audience') + '*\\n' + (r.target_audience || 'Non déterminé') + ' · Qualité : ' + (r.quality_score || '?') + '/10\\n\\n⏱ _' + d.response_time_ms + 'ms_';\n}\n\nif (message.length > 4096) message = message.substring(0, 4090) + '..._';\n\nreturn [{\n  json: {\n    ...d,\n    report_message: message,\n    charts: r.charts || []\n  }\n}];"
+      },
+      "id": "wf04-node-09",
+      "name": "Format Report Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.report_message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "wf04-node-10",
+      "name": "Send Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2020, 300],
+      "webhookId": "wf04-auto-webhook-v1",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst charts = d.charts || [];\nconst extractedData = d.extracted_data;\n\nif (d.content_type !== 'data' || !charts.length || !extractedData || !extractedData.data) {\n  return [{ json: { ...d, chart_urls: [], charts_count: 0 } }];\n}\n\nconst rows = extractedData.data || [];\nconst cols = extractedData.columns || [];\nconst chartUrls = [];\n\nfor (const chart of charts.slice(0, 3)) {\n  const type = chart.type || 'bar';\n  const xCol = chart.x || cols[0];\n  const yCol = chart.y || cols[1];\n  if (!xCol || !yCol) continue;\n  const xValues = rows.map(r => r[xCol]).filter(v => v != null).slice(0, 20);\n  const yValues = rows.map(r => parseFloat(r[yCol])).filter(v => !isNaN(v)).slice(0, 20);\n  if (!xValues.length || !yValues.length) continue;\n  const chartConfig = {\n    type: type,\n    data: {\n      labels: type !== 'scatter' ? xValues.map(String) : undefined,\n      datasets: [{\n        label: yCol,\n        data: type === 'scatter' ? xValues.map((x, i) => ({ x, y: yValues[i] })) : yValues,\n        backgroundColor: 'rgba(99, 102, 241, 0.5)',\n        borderColor: 'rgba(99, 102, 241, 1)',\n        borderWidth: 2,\n        fill: false,\n        tension: 0.3\n      }]\n    },\n    options: {\n      plugins: { title: { display: true, text: chart.title || (yCol + ' par ' + xCol) } }\n    }\n  };\n  const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));\n  chartUrls.push({\n    url: 'https://quickchart.io/chart?c=' + encodedConfig + '&w=700&h=400&bkg=white',\n    title: chart.title || '',\n    insight: chart.insight || ''\n  });\n}\n\nreturn [{ json: { ...d, chart_urls: chartUrls, charts_count: chartUrls.length } }];"
+      },
+      "id": "wf04-node-11",
+      "name": "Generate Chart URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2260, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prépare les paramètres pour UPDATE sessions\n// Connecté depuis Generate Chart URLs (avant le chemin optionnel des charts)\n// Suit le pattern CLAUDE.md : nodes critiques connectés en AMONT du node optionnel\nconst d = $input.first().json;\n\nreturn [{\n  json: {\n    p1: d.llm_used || 'grok',\n    p2: Buffer.from(JSON.stringify(d.analysis || {})).toString('base64'),\n    p3: String(Math.round(d.response_time_ms || 0)),\n    p4: String(d.session_id),\n    chat_id: d.chat_id,\n    language: d.language,\n    session_id: d.session_id\n  }\n}];"
+      },
+      "id": "wf04-node-12",
+      "name": "Prepare DB Params",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 460]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions SET status = 'completed', analysis_type = 'auto', llm_used = $1, llm_response = convert_from(decode($2, 'base64'), 'UTF8')::jsonb, llm_response_time_ms = $3::integer, updated_at = NOW() WHERE id = $4::integer",
+        "options": {}
+      },
+      "id": "wf04-node-13",
+      "name": "Update Session DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2740, 460],
+      "credentials": {
+        "postgres": {
+          "id": "REMPLACER_PAR_ID_POSTGRES",
+          "name": "Intelligence Bot DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.language === 'FR' ? '━━━━━━━━━━━━━━━━━━━━\\nQue souhaitez-vous faire ?' : '━━━━━━━━━━━━━━━━━━━━\\nWhat would you like to do?' }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "reply_markup": ""
+        }
+      },
+      "id": "wf04-node-14",
+      "name": "Send Final Menu",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2980, 460],
+      "webhookId": "wf04-auto-webhook-v1",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Chemin optionnel : split les graphiques pour envoi individuel\n// Pattern CLAUDE.md : ce node peut retourner [] sans bloquer Update Session / Send Final Menu\nconst d = $input.first().json;\nconst charts = d.chart_urls || [];\n\nif (!charts.length) {\n  return [];\n}\n\nreturn charts.map(chart => ({\n  json: {\n    chat_id: d.chat_id,\n    photo_url: chart.url,\n    caption: '📊 ' + chart.title + '\\n_' + chart.insight + '_'\n  }\n}));"
+      },
+      "id": "wf04-node-15",
+      "name": "Split Charts for Sending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 160]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $json.chat_id }}",
+        "photo": "={{ $json.photo_url }}",
+        "additionalFields": {
+          "caption": "={{ $json.caption }}",
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "wf04-node-16",
+      "name": "Send Chart Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2740, 160],
+      "webhookId": "wf04-auto-webhook-v1",
+      "credentials": {
+        "telegramApi": {
+          "id": "rDoWGFPpi9X9cajV",
+          "name": "Stat-Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [[{"node": "Extract Callback Data", "type": "main", "index": 0}]]
+    },
+    "Extract Callback Data": {
+      "main": [[{"node": "Send Analyzing Message", "type": "main", "index": 0}]]
+    },
+    "Send Analyzing Message": {
+      "main": [[{"node": "Get Session from DB", "type": "main", "index": 0}]]
+    },
+    "Get Session from DB": {
+      "main": [[{"node": "Prepare Agent Input", "type": "main", "index": 0}]]
+    },
+    "Prepare Agent Input": {
+      "main": [[{"node": "Grok Agent", "type": "main", "index": 0}]]
+    },
+    "Grok Chat Model": {
+      "ai_languageModel": [[{"node": "Grok Agent", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Grok Agent": {
+      "main": [[{"node": "Parse Agent Response", "type": "main", "index": 0}]]
+    },
+    "Parse Agent Response": {
+      "main": [[{"node": "Format Report Message", "type": "main", "index": 0}]]
+    },
+    "Format Report Message": {
+      "main": [[{"node": "Send Report", "type": "main", "index": 0}]]
+    },
+    "Send Report": {
+      "main": [[{"node": "Generate Chart URLs", "type": "main", "index": 0}]]
+    },
+    "Generate Chart URLs": {
+      "main": [[
+        {"node": "Prepare DB Params", "type": "main", "index": 0},
+        {"node": "Split Charts for Sending", "type": "main", "index": 0}
+      ]]
+    },
+    "Prepare DB Params": {
+      "main": [[
+        {"node": "Update Session DB", "type": "main", "index": 0},
+        {"node": "Send Final Menu", "type": "main", "index": 0}
+      ]]
+    },
+    "Split Charts for Sending": {
+      "main": [[{"node": "Send Chart Photo", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

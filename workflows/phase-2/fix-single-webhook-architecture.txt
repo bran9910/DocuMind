@@ -1,0 +1,236 @@
+================================================================================
+FIX : ARCHITECTURE WEBHOOK UNIQUE — SUPPRESSION DES 5 TRIGGERS MULTIPLES
+================================================================================
+Date       : 14 avril 2026
+Problème   : Telegram ne supporte qu'un seul webhook actif par bot token.
+             Les 5 telegramTrigger séparés se battent pour le webhook → un seul
+             répond à la fois → obligation de réactiver manuellement.
+             Le trigger WF-04c perd le webhook entre les questions → re-clic.
+Solution   : Un seul trigger + un Code Dispatcher + un Switch.
+             L'état DB (conversation_state) gère le routage des messages texte.
+================================================================================
+
+
+========================================
+ÉTAPE 1 — MODIFIER le trigger existant
+========================================
+
+Nœud à modifier : "Telegram: Receive Messages"
+  → Renommer en : "Telegram: Single Entry"
+  → Ouvrir le nœud
+  → Dans "Updates" : supprimer "message", ajouter "message" ET "callback_query"
+    (cocher les deux cases)
+  → webhookId : laisser "wf01-telegram-webhook" tel quel
+
+Résultat attendu dans le JSON :
+  "updates": ["message", "callback_query"]
+
+
+========================================
+ÉTAPE 2 — SUPPRIMER ces 8 nœuds
+========================================
+
+Supprimer EXACTEMENT ces nœuds (clic droit → Delete) :
+
+  1. "Telegram: Language Callbacks"   (webhookId: wf01b-telegram-webhook)
+  2. "Telegram: Receive File"         (webhookId: wf02-telegram-webhook)
+  3. "Telegram Trigger"               (webhookId: wf04-auto-webhook-v1)
+  4. "Telegram Trigger Custom"        (webhookId: wf04c-telegram-webhook)
+  5. "Filter: /start Only"            (IF node, filtre message.text === '/start')
+  6. "Filter: lang_ Callbacks"        (IF node, filtre callback_query.data startsWith 'lang_')
+  7. "Has Document?"                  (IF node, filtre !!message.document?.file_id)
+
+IMPORTANT : Ne pas supprimer les nœuds en aval — uniquement ces 7.
+
+
+========================================
+ÉTAPE 3 — AJOUTER le nœud Dispatcher
+========================================
+
+Ajouter un nœud : Code  (type: n8n-nodes-base.code)
+  Nom           : "Dispatcher"
+  Position      : entre "Telegram: Single Entry" et le nouveau Switch
+  Mode          : Run Once for All Items
+
+--- CODE À COLLER ---
+
+const update = $input.first().json;
+const hasCallback = !!update.callback_query;
+const msg = update.message;
+
+if (hasCallback) {
+  const raw = (update.callback_query.data || '').replace(/^=/, '');
+  let route = 'callback_other';
+  if (raw.startsWith('lang_'))                         route = 'callback_lang';
+  else if (raw.startsWith('auto_') || raw.startsWith('custom_')) route = 'callback_analysis';
+  return [{ json: { ...update, _route: route } }];
+}
+
+if (msg) {
+  const text = (msg.text || '').trim();
+  if (msg.document) return [{ json: { ...update, _route: 'file' } }];
+  if (text === '/start') return [{ json: { ...update, _route: 'start' } }];
+  // /cancel et tout texte normal → branche texte (IF Cancel s'en charge)
+  return [{ json: { ...update, _route: 'text' } }];
+}
+
+return []; // ignore edited_message, etc.
+
+--- FIN CODE ---
+
+
+========================================
+ÉTAPE 4 — AJOUTER le nœud Switch
+========================================
+
+Ajouter un nœud : Switch  (type: n8n-nodes-base.switch)
+  Nom           : "Route by Update Type"
+  Position      : juste après "Dispatcher"
+  Mode          : Rules
+
+Configurer 4 règles (dans l'ordre) :
+
+  Règle 0 — Output "start"
+    Field   : {{ $json._route }}
+    Equals  : start
+
+  Règle 1 — Output "callback_lang"
+    Field   : {{ $json._route }}
+    Equals  : callback_lang
+
+  Règle 2 — Output "file"
+    Field   : {{ $json._route }}
+    Equals  : file
+
+  Règle 3 — Output "callback_analysis"
+    Field   : {{ $json._route }}
+    Equals  : callback_analysis
+
+  Fallback (output par défaut) : "text"
+    → Dans les options du Switch, activer "Send data to fallback output"
+    → Ce 5e output recevra _route = 'text' (messages texte normaux + /cancel)
+
+
+========================================
+ÉTAPE 5 — REWIRE les connexions
+========================================
+
+Connecter dans cet ordre exact :
+
+  "Telegram: Single Entry"   →  "Dispatcher"
+  "Dispatcher"               →  "Route by Update Type"
+
+  Switch output 0 (start)              →  "Extract User Info"
+    (était : Filter: /start Only → Extract User Info)
+
+  Switch output 1 (callback_lang)      →  "Extract Lang Choice"
+    (était : Filter: lang_ Callbacks → Extract Lang Choice)
+
+  Switch output 2 (file)               →  "Prepare File Info"
+    (était : Telegram: Receive File → Has Document? → Prepare File Info)
+    NOTE : on saute "Has Document?" car le Dispatcher garantit déjà
+           qu'un document existe sur cette branche.
+
+  Switch output 3 (callback_analysis)  →  "Extract Callback Data"
+    (était : Telegram Trigger → Extract Callback Data)
+
+  Switch output 4 / fallback (text)    →  "Extract Message Data"
+    (était : Telegram Trigger Custom → Extract Message Data)
+    NOTE : "Extract Message Data" détecte déjà is_cancel = (text === '/cancel')
+           donc /cancel ET les réponses aux questions passent tous ici. ✓
+
+
+========================================
+ÉTAPE 6 — VÉRIFIER "Extract Message Data"
+========================================
+
+Ouvrir le nœud "Extract Message Data" et vérifier que le code lit
+bien depuis $input.first().json.message :
+
+  const msg = $input.first().json.message || $input.first().json;
+
+  Si le nœud utilise $input.first().json.message uniquement, c'est OK —
+  le Dispatcher passe toujours l'update complet avec .message intact.
+
+Aucune modification nécessaire si le code actuel est :
+  const msg = $input.first().json.message || $input.first().json;
+
+
+========================================
+ÉTAPE 7 — VÉRIFIER "Extract Lang Choice"
+========================================
+
+Ce nœud lit probablement $input.first().json.callback_query.data.
+Le Dispatcher passe l'update complet → callback_query.data est intact.
+Aucune modification nécessaire.
+
+Idem pour "Extract Callback Data" (lit callback_query.data avec .replace(/^=/, '')).
+
+
+========================================
+ÉTAPE 8 — PUBLIER (une seule fois)
+========================================
+
+  1. Cliquer "Save"
+  2. Cliquer "Publish" / activer le workflow
+  3. Attendre 5-10 secondes
+  4. Tester /start → doit répondre
+  5. Tester envoi d'un fichier → doit répondre
+  6. Tester Analyse auto → doit répondre
+  7. Tester Analyse personnalisée, répondre Q1..Q5 → plus besoin de re-clic
+
+PLUS JAMAIS besoin d'activer plusieurs workflows séparément.
+Un seul Publish suffit pour tout.
+
+
+========================================
+RÉSUMÉ VISUEL FINAL
+========================================
+
+  ┌─────────────────────────────────────────────┐
+  │  Telegram: Single Entry                     │
+  │  updates: [message, callback_query]         │
+  └────────────────────┬────────────────────────┘
+                       ↓
+              ┌────────────────┐
+              │   Dispatcher   │  (Code node)
+              │  → _route      │
+              └───────┬────────┘
+                      ↓
+          ┌───────────────────────┐
+          │  Route by Update Type │  (Switch)
+          └──┬──┬──┬──┬──────────┘
+             │  │  │  │
+      start  │  │  │  │  callback_lang
+             ↓  │  │  ↓
+    Extract     │  │  Extract
+    User Info   │  │  Lang Choice
+                │  │
+           file │  │ callback_analysis
+                ↓  ↓
+    Prepare    Extract
+    File Info  Callback Data
+
+          fallback (text + /cancel)
+                ↓
+        Extract Message Data
+        → IF Cancel → [branche /cancel ou questions Q1-Q5]
+
+
+========================================
+POURQUOI ÇA RÉSOUT LES 2 PROBLÈMES
+========================================
+
+Problème 1 — "obligé de lancer un par un" :
+  → Cause : 5 setWebhook se battent, le dernier Publish écrase les autres.
+  → Fix   : 1 seul trigger = 1 seul setWebhook = 1 seul Publish.
+
+Problème 2 — "re-cliquer à chaque nouvelle question" :
+  → Cause : WF-04c avait son propre trigger qui perdait le webhook dès
+            qu'un autre workflow était actif.
+  → Fix   : Toute réponse texte de l'utilisateur (Q1, Q2, ... Q5) passe
+            maintenant par le fallback → "Extract Message Data" → "Get Active
+            Session" (DB) → "Switch State" → handler de la bonne question.
+            La conversation est pilotée par l'état en base, pas par un trigger.
+
+================================================================================

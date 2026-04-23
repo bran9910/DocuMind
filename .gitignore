@@ -1,0 +1,23 @@
+# Environment & secrets
+.env
+.env.*
+docker-compose.yml
+docker-compose.override.yml
+
+# Credentials
+*.json.key
+credentials.json
+service-account*.json
+
+# Local editor
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Local test files
+test-files/
+uploads/
+
+# Claude internal
+CLAUDE.md

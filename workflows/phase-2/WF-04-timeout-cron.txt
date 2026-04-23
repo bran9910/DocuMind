@@ -1,0 +1,98 @@
+====================================================================
+SPRINT 2.6 — CAS LIMITES WF-04
+Timeout 30 min + /cancel + validation longueur
+8 avril 2026
+====================================================================
+
+
+--------------------------------------------------------------------
+1. TIMEOUT 30 MIN — Workflow Cron (WF-TIMEOUT)
+--------------------------------------------------------------------
+Créer un workflow séparé (pas WF-04) :
+  - Trigger : Schedule / Cron → toutes les 5 minutes
+  - Heure d'activation : permanente
+
+NODE B1 : "Cleanup Expired Sessions" — PostgreSQL node
+
+// Query :
+UPDATE sessions
+SET conversation_state = 'idle',
+    status             = 'timeout',
+    updated_at         = NOW()
+WHERE conversation_state LIKE 'awaiting_%'
+  AND updated_at < NOW() - INTERVAL '30 minutes'
+RETURNING id, chat_id, conversation_state
+
+// Pas de Query Parameters — filtre par date uniquement
+
+
+NODE B2 : "Check If Any Expired" — IF node
+
+// Condition : {{ $input.all().length }} > 0
+
+
+NODE B3 : "Notify Expired Users" — Code node (branche YES)
+
+// Envoie un message à chaque session expirée
+const sessions = $input.all();
+
+const messages = sessions.map(item => {
+  return {
+    json: {
+      chat_id: item.json.chat_id,
+      text: '⏰ Session expirée.\n\nVotre analyse personnalisée a été annulée après 30 minutes d\'inactivité.\n\nEnvoyez un nouveau fichier pour recommencer.'
+    }
+  };
+});
+
+return messages;
+
+// Connecter à : Telegram sendMessage node
+// Chat ID : {{ $json.chat_id }}
+// Text    : {{ $json.text }}
+
+
+--------------------------------------------------------------------
+2. /CANCEL — INTÉGRÉ DANS WF-04
+--------------------------------------------------------------------
+Déjà documenté dans WF-04-custom-nodes-Q1-Q4.txt (NODE CANCEL).
+
+Résumé :
+  - IF is_cancel = true → UPDATE conversation_state='idle' + Send "Annulé"
+  - Query Parameters : $1 = {{ $('Extract Message Data').first().json.chat_id }}
+
+UPDATE sessions
+SET conversation_state = 'idle',
+    updated_at         = NOW()
+WHERE chat_id = $1
+  AND conversation_state LIKE 'awaiting_%'
+
+
+--------------------------------------------------------------------
+3. VALIDATION LONGUEUR RÉPONSE — INTÉGRÉE DANS WF-04
+--------------------------------------------------------------------
+Déjà codée dans le NODE 5 "Validate Answer" (fichier WF-04-custom-nodes-Q1-Q4.txt).
+
+Règles :
+  - Minimum : 3 caractères
+  - Maximum : 500 caractères
+  - Messages d'erreur bilingues FR/ENG
+
+Flux :
+  Validate Answer → IF is_valid
+    YES → Switch conversation_state (continuer)
+    NO  → Telegram sendMessage (error_msg) → END
+  Le node de validation ne modifie PAS la session en cas d'erreur.
+  L'utilisateur peut répondre à nouveau.
+
+
+--------------------------------------------------------------------
+RÉSUMÉ SPRINT 2.6 — CHECKLIST
+--------------------------------------------------------------------
+[ ] Créer WF-TIMEOUT dans n8n (Cron 5min + UPDATE + Telegram)
+[ ] Activer WF-TIMEOUT (attendre 30s entre Publish des WF)
+[ ] Vérifier que /cancel est géré dans WF-04 (IF is_cancel en amont)
+[ ] Tester : laisser session inactive 30+ min → message reçu ✅
+[ ] Tester : /cancel à Q3 → "Analyse annulée" + état idle ✅
+[ ] Tester : réponse 1 char → message erreur sans avancer ✅
+[ ] Tester : réponse 501 chars → message erreur sans avancer ✅
