@@ -24,13 +24,13 @@ Everything runs on a private VPS — no cloud LLM required.
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Telegram  │────▶│     n8n     │────▶│  Agent IA   │
-│    User     │◀────│  Workflows  │◀────│   Ollama    │
-└─────────────┘     └─────────────┘     └─────────────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Telegram  │───▶│     n8n     │───▶│  Agent IA   │
+│    User     │◀───│  Workflows  │◀───│   Ollama    │
+└─────────────┘    └─────────────┘    └─────────────┘
+                          │
+             ┌────────────┼────────────┐
+             ▼            ▼            ▼
         ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
         │  PostgreSQL │  │  QuickChart │  │ File Parse  │
         │  Sessions   │  │  (Graphs)   │  │  PDF / DOCX │
